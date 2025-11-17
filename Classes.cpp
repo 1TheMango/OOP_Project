@@ -33,12 +33,12 @@ public:
     sf::Sprite& getSprite() { return sprite; }
 };
 
+
 class NormalTile : public Tile {};
 class BlockedTile : public Tile { public: bool isBlocked() const override { return true; } };
 class MonsterTile : public Tile { public: bool isMonster() const override { return true; } void onEnter() override { cout << "[Event] Monster encountered (board)\n"; } };
 class ExitTile : public Tile { public: bool isExit() const override { return true; } };
 
-// ----------------------------- Board -----------------------------
 class Board {
 private:
     int rows, cols;
@@ -349,7 +349,7 @@ int main() {
                 }
             } // end InBattle branch
             else if (state == GameState::GameOver) {
-                // nothing - could restart
+
             }
             else if (state == GameState::Victory) {
                 // nothing
@@ -428,6 +428,6 @@ int main() {
         }
         window.display();
     }
-
+    
     return 0;
 }
