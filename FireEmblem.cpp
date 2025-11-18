@@ -1,434 +1,31 @@
-// RogueEmblem.cpp
-// Single-file SFML game with dice movement and integrated turn-based + dice battle UI
-// Fully refactored to comply with the OOP Project Proposal and UML diagram.
+// FireEmblem.cpp
+// Main game loop file.
+// All class definitions are now in .h and .cpp files.
 //
-// Compile:
-// g++ RogueEmblem.cpp -o RogueEmblem -lsfml-graphics -lsfml-window -lsfml-system
+// Compile (example for g++):
+// g++ FireEmblem.cpp Dice.cpp Entity.cpp CombatSystem.cpp Tile.cpp Board.cpp -o FireEmblem -lsfml-graphics -lsfml-window -lsfml-system
 
 #include <SFML/Graphics.hpp>
 #include <iostream>
 #include <vector>
-#include <cstdlib>
-#include <ctime>
 #include <string>
-#include <optional>
 #include <functional>
-#include <random>
-#include <chrono>
-#include <memory>
+#include <memory> 		// For std::unique_ptr
 
+// Include all our new class headers
+#include "Dice.h"
+#include "entity.h"
+#include "CombatSystem.h"
+#include "Tile.h"
+#include "Board.h"
+#include "Player.cpp" // Player subclasses are in Player.cpp
+#include "entity.cpp"
+#include "CombatSystem.cpp"
+#include "Tile.cpp"
+#include "Board.cpp"
 using namespace std;
 
-// Global RNG setup
-static std::mt19937 rng((unsigned)std::chrono::high_resolution_clock::now().time_since_epoch().count());
-
-// --- Dice Hierarchy (UML) ---------------------------------------------------
-class Dice {
-protected:
-	int sides;
-	int lastRoll = 0;
-public:
-	Dice(int s) : sides(s) {}
-	virtual ~Dice() {}
-	virtual int roll() {
-		std::uniform_int_distribution<int> dist(1, sides);
-		lastRoll = dist(rng);
-		return lastRoll;
-	}
-	int getLastRoll() const { return lastRoll; }
-};
-
-class D6 : public Dice { public: D6() : Dice(6) {} };
-class D20 : public Dice { public: D20() : Dice(20) {} };
-
-// --- Forward Declarations & Enums -------------------------------------------
-enum class GameState { MainMenu, Exploring, InBattle, GameOver, Victory };
-struct SpecialAttributes;
-class Entity;
-class Player;
-class Enemy;
-class CombatSystem;
-class Tile;
-
-// --- Special Attributes (UML) -----------------------------------------------
-struct SpecialAttributes {
-	std::string name; 		// NAME string
-	int atkPowerBonus = 0; // ATKPOWER int
-	int minRolls = 0; 		// minrolls int (d20 requirement for ability success)
-};
-
-// --- Entity Hierarchy (UML) -------------------------------------------------
-class Entity {
-public:
-	std::string name;
-	int hp;
-	int maxHp;
-	int attack; 	// ATK int
-	int defense; // DEF int
-	int mana = 0; 	// MANA int (used by Player)
-	bool defending = false;
-
-	Entity(std::string n, int m, int a, int d) : name(n), hp(m), maxHp(m), attack(a), defense(d) {}
-	virtual ~Entity() {}
-
-	// Core combat methods
-	virtual int calculateDamage() = 0; // The base damage dice roll + ATK
-	void takeDamage(int dmg) {
-		if (defending) {
-			dmg = dmg / 2;
-			std::cout << name << " defended; damage halved to " << dmg << "\n";
-		}
-		hp -= dmg;
-		if (hp < 0) hp = 0;
-	}
-	void resetDefend() { defending = false; }
-};
-
-// --- Enemy Subclasses (UML) -------------------------------------------------
-class Enemy : public Entity {
-protected:
-	D6 d6;
-public:
-	// POS int is handled by the main loop (enemyRow/Col)
-	Enemy(std::string n, int m, int a, int d) : Entity(n, m, a, d) {}
-	
-	// Enemy default damage calculation (Attack Player)
-	int calculateDamage() override {
-		// Simple Enemy attack: d6 + ATK
-		return d6.roll() + attack;
-	}
-};
-
-class Monster : public Enemy {
-public:
-	std::string type; // type string
-	Monster(std::string t, int m, int a, int d) : Enemy(t, m, a, d), type(t) {}
-};
-
-class Boss : public Enemy {
-public:
-	int level; // Level int
-	Boss(std::string n, int l, int m, int a, int d) : Enemy(n, m, a, d), level(l) {
-		name = "Boss " + n;
-	}
-	
-	// Boss specialmove() implementation (stronger attack)
-	int calculateDamage() override {
-		// Boss attacks harder: 2*d6 + ATK
-		return d6.roll() + d6.roll() + attack;
-	}
-};
-
-// --- Player Hierarchy (UML) -------------------------------------------------
-class Player : public Entity {
-public:
-	int posR, posC; // POS int
-	std::vector<SpecialAttributes> specialAbilities;
-
-	Player(std::string n, int m, int a, int d, int r, int c)
-		: Entity(n, m, a, d), posR(r), posC(c) {}
-
-	virtual void setStats() = 0; // To set initial class stats
-	
-	// Player damage calculation (Attack)
-	int calculateDamage() override {
-		D6 d6;
-		return d6.roll() + attack;
-	}
-	
-	// Combat actions will be delegated to CombatSystem, but keeping
-	// these virtual functions satisfies the UML's intent for subclass attacks/abilities.
-	virtual void attackEnemy(Enemy* enemy, std::ostream& log) = 0;
-	virtual void useAbility(Enemy* enemy, std::ostream& log) = 0;
-};
-
-class Soldier : public Player {
-public:
-	Soldier(int r, int c) : Player("Soldier", 100, 15, 10, r, c) { setStats(); }
-
-	void setStats() override {
-		maxHp = 120; hp = 120; attack = 15; defense = 8; mana = 10;
-		// The original logic used a basic attack and ability. Let's map it:
-		specialAbilities.push_back({"Power Strike", 5, 15}); // ATKBonus 5, requires d20>=15
-	}
-
-	// These methods delegate to the CombatSystem for core logic
-	void attackEnemy(Enemy* enemy, std::ostream& log) override;
-	void useAbility(Enemy* enemy, std::ostream& log) override;
-};
-
-class Archer : public Player {
-public:
-	Archer(int r, int c) : Player("Archer", 80, 18, 5, r, c) { setStats(); }
-
-	void setStats() override {
-		maxHp = 80; hp = 80; attack = 18; defense = 4; mana = 20;
-		specialAbilities.push_back({"Piercing Shot", 3, 12}); // ATKBonus 3, requires d20>=12
-	}
-
-	void attackEnemy(Enemy* enemy, std::ostream& log) override;
-	void useAbility(Enemy* enemy, std::ostream& log) override;
-};
-
-class Mage : public Player {
-public:
-	Mage(int r, int c) : Player("Mage", 70, 8, 3, r, c) { setStats(); }
-
-	void setStats() override {
-		maxHp = 70; hp = 70; attack = 8; defense = 3; mana = 40;
-		specialAbilities.push_back({"Fireball", 10, 10}); // ATKBonus 10, requires d20>=10
-	}
-
-	void attackEnemy(Enemy* enemy, std::ostream& log) override;
-	void useAbility(Enemy* enemy, std::ostream& log) override;
-};
-
-
-// --- Combat System (UML) ----------------------------------------------------
-class CombatSystem {
-private:
-	Player* player;
-	Enemy* enemy;
-	D20 d20;
-	std::ostream& log;
-
-public:
-	CombatSystem(Player* p, Enemy* e, std::ostream& l) : player(p), enemy(e), log(l) {}
-
-	// TurnManager() logic is implicitly handled by the main loop and action calls.
-	// Player Options: Attack
-	void attack() {
-		if (!player || !enemy) return;
-
-		int hitRoll = d20.roll();
-		log << "[Dice] Player d20 = " << hitRoll << " (" << player->name << " ATK: " << player->attack << ")\n";
-
-		// To Hit Check: d20 + Player ATK vs (10 + Enemy DEF)
-		int attackCheck = hitRoll + player->attack;
-		int defenseTarget = 10 + enemy->defense;
-		
-		bool crit = (hitRoll == 20);
-		
-		if (attackCheck >= defenseTarget || crit) {
-			int dmg = player->calculateDamage();
-			if (crit) { dmg += D6().roll(); log << "CRITICAL! extra d6\n"; } // D6 is local to function
-			
-			enemy->takeDamage(dmg);
-			log << player->name << " hits " << enemy->name << " for " << dmg << " damage.\n";
-		} else {
-			log << player->name << "'s attack missed (Target: " << defenseTarget << ").\n";
-		}
-	}
-
-	// Player Options: Ability
-	void ability() {
-		if (!player || !enemy || player->specialAbilities.empty()) return;
-		
-		const SpecialAttributes& ability = player->specialAbilities[0];
-		const int MANA_COST = 5; // Fixed cost for simplicity
-		
-		if (player->mana < MANA_COST) {
-			log << "Not enough Mana (" << player->mana << ")! Cost is " << MANA_COST << ".\n";
-			return;
-		}
-		
-		int abilityRoll = d20.roll();
-		log << "[Dice] Ability d20 = " << abilityRoll << " (Required: >=" << ability.minRolls << ")\n";
-		
-		// Check for ability success based on roll
-		if (abilityRoll >= ability.minRolls) {
-			D6 d6;
-			// Damage Calculator(): 2*d6 + ATK + Bonus
-			int dmg = d6.roll() + d6.roll() + player->attack + ability.atkPowerBonus;
-			player->mana -= MANA_COST;
-			
-			enemy->takeDamage(dmg);
-			log << ability.name << " success! You deal " << dmg << " damage. Mana left: " << player->mana << "\n";
-		} else {
-			log << ability.name << " failed (roll too low).\n";
-		}
-	}
-
-	// Player Options: Defend
-	void defend() {
-		if (!player) return;
-		player->defending = true;
-		log << player->name << " braces for the next attack (defend).\n";
-	}
-
-	// Player Options: Run
-	bool run() {
-		int d20Roll = d20.roll();
-		log << "[Dice] Run d20 = " << d20Roll << "\n";
-		if (d20Roll >= 12) {
-			log << "You fled the battle!\n";
-			return true;
-		} else {
-			log << "Run failed!\n";
-			return false;
-		}
-	}
-
-	// Enemy Turn logic
-	void enemyTurn() {
-		if (!enemy || player->hp <= 0) return;
-		
-		log << "--- [Enemy Turn] " << enemy->name << " attacks ---\n";
-		
-		int d20Roll = d20.roll();
-		log << "[Dice] Enemy d20 = " << d20Roll << " (" << enemy->name << " ATK: " << enemy->attack << ")\n";
-		
-		// To Hit Check: d20 + Enemy ATK vs (10 + Player DEF)
-		int attackCheck = d20Roll + enemy->attack;
-		int defenseTarget = 10 + player->defense;
-		
-		bool crit = (d20Roll == 20);
-		
-		if (attackCheck >= defenseTarget || crit) {
-			int dmg = enemy->calculateDamage();
-			if (crit) { dmg += D6().roll(); log << "Enemy CRITICAL!\n"; }
-			
-			player->takeDamage(dmg);
-			log << enemy->name << " deals " << dmg << " damage. Player HP = " << player->hp << "\n";
-		} else {
-			log << enemy->name << " missed (Target: " << defenseTarget << ").\n";
-		}
-		
-		// Reset defend status
-		player->resetDefend();
-	}
-
-	// Win/Loss check functions
-	bool isEnemyDefeated() const {
-		return enemy && enemy->hp <= 0;
-	}
-	bool isPlayerDefeated() const {
-		return player && player->hp <= 0;
-	}
-};
-
-// Implement Player class delegation (as CombatSystem must be fully defined)
-void Soldier::attackEnemy(Enemy* enemy, std::ostream& log) { CombatSystem cs(this, enemy, log); cs.attack(); }
-void Soldier::useAbility(Enemy* enemy, std::ostream& log) { CombatSystem cs(this, enemy, log); cs.ability(); }
-void Archer::attackEnemy(Enemy* enemy, std::ostream& log) { CombatSystem cs(this, enemy, log); cs.attack(); }
-void Archer::useAbility(Enemy* enemy, std::ostream& log) { CombatSystem cs(this, enemy, log); cs.ability(); }
-void Mage::attackEnemy(Enemy* enemy, std::ostream& log) { CombatSystem cs(this, enemy, log); cs.attack(); }
-void Mage::useAbility(Enemy* enemy, std::ostream& log) { CombatSystem cs(this, enemy, log); cs.ability(); }
-
-
-// --- Tile Hierarchy (UML) ---------------------------------------------------
-class Tile {
-protected:
-	sf::Sprite sprite;
-public:
-	virtual ~Tile() {}
-	// Position/isVisited is handled by Board/Game logic for simplicity
-	
-	virtual bool isBlocked() const { return false; }
-	virtual bool isMonster() const { return false; }
-	virtual bool isBoss() const { return false; } // Added for BossTile
-	virtual bool isExit() const { return false; }
-	
-	// onEnter(Player) as per UML
-	virtual void onEnter(Player* p) { (void)p; }
-	
-	sf::Sprite& getSprite() { return sprite; }
-};
-
-class EmptyTile : public Tile { 
-public: 
-	void onEnter(Player* p) override { 
-		// std::cout << "[Event] Empty tile entered.\n";
-	} 
-}; // Represents 'N' in the level layout
-
-class BlockedTile : public Tile { 
-public: 
-	bool isBlocked() const override { return true; } 
-	// denyMovement() logic is handled by the main game loop
-};
-
-class MonsterTile : public Tile { 
-private:
-	bool combatTriggered = false; // To prevent infinite battle loop on 'Run'
-public: 
-	bool isMonster() const override { return true; } 
-	// triggerCombat() logic is handled in the main game loop
-	void onEnter(Player* p) override { 
-		if (!combatTriggered) {
-			 std::cout << "[Event] Monster encountered (board)\n"; 
-			 combatTriggered = true;
-		}
-	} 
-	bool shouldTriggerCombat() const { return combatTriggered; }
-	void resetCombatTrigger() { combatTriggered = false; }
-};
-
-// New BossTile class per UML
-class BossTile : public Tile {
-private:
-	bool combatTriggered = false;
-public: 
-	bool isBoss() const override { return true; }
-	void onEnter(Player* p) override {
-		if (!combatTriggered) {
-			std::cout << "[Event] BOSS encountered (board)\n";
-			combatTriggered = true;
-		}
-	}
-	bool shouldTriggerCombat() const { return combatTriggered; }
-	void resetCombatTrigger() { combatTriggered = false; }
-};
-
-class ExitTile : public Tile { 
-public: 
-	bool isExit() const override { return true; } 
-	// endLevel() logic is handled in the main game loop
-	void onEnter(Player* p) override { 
-		std::cout << "[Event] Exit reached\n"; 
-	} 
-};
-
-// --- Board Class ------------------------------------------------------------
-// (Modified from original to use proper Tile* types)
-class Board {
-private:
-	int rows, cols;
-	float tileSize;
-	vector<vector<Tile*>> grid;
-public:
-	Board(int r, int c, float size) : rows(r), cols(c), tileSize(size) {
-		grid.resize(rows, vector<Tile*>(cols, nullptr));
-	}
-	~Board() {
-		for (int r=0;r<rows;r++) for (int c=0;c<cols;c++) delete grid[r][c];
-	}
-	void setTile(int r, int c, Tile* tile, sf::Texture& tex) {
-		if (!tile) return;
-		tile->getSprite().setTexture(tex);
-		tile->getSprite().setPosition(c * tileSize, r * tileSize);
-		grid[r][c] = tile;
-	}
-	Tile* getTile(int r,int c) {
-		if (r<0||c<0||r>=rows||c>=cols) return nullptr;
-		return grid[r][c];
-	}
-	void draw(sf::RenderWindow& win) {
-		for (int r=0;r<rows;r++) for (int c=0;c<cols;c++) if (grid[r][c]) win.draw(grid[r][c]->getSprite());
-	}
-	// Replaces MonsterTile with EmptyTile upon defeat
-	void replaceWithEmpty(int r,int c, sf::Texture& texEmpty) {
-		delete grid[r][c];
-		grid[r][c] = new EmptyTile();
-		grid[r][c]->getSprite().setTexture(texEmpty);
-		grid[r][c]->getSprite().setPosition(c * tileSize, r * tileSize);
-		// Reset the player's position sprite to ensure it draws over the empty tile
-	}
-};
-
 // --- UI Manager (Simplified for single-file SFML) ---------------------------
-// In the UML, UIManager handles screen transitions. In this refactor, 
-// the rendering and button setup in 'main' acts as the UIManager methods.
 // The Button struct is retained as a UI Helper.
 struct Button {
 	sf::RectangleShape rect;
@@ -439,14 +36,14 @@ struct Button {
 
 // --- Main Game Loop ---------------------------------------------------------
 int main() {
-	// Dice system initialization is handled by global RNG setup
+	// Dice system initialization is handled by global RNG setup in Dice.cpp
 	
 	const int ROWS = 10, COLS = 10;
 	const float TILE_SIZE = 64.f;
 	const int WINDOW_W = int(COLS * TILE_SIZE);
 	const int WINDOW_H = int(ROWS * TILE_SIZE + 160); // extra space for battle UI
 
-	sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "RogueEmblem - OOP Project");
+	sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "FireEmblem - OOP Project");
 	window.setFramerateLimit(60);
 
 	// Textures - renamed texNormal to texEmpty for UML compliance
@@ -458,10 +55,20 @@ int main() {
 	if (!texExit.loadFromFile("assets/exit.png")) 		cerr << "Warn: missing assets/exit.png\n";
 	if (!texPlayer.loadFromFile("assets/player.png")) 	cerr << "Warn: missing assets/player.png\n";
 
+	// --- ADD: Battle-specific textures ---
+	sf::Texture texSoldierBattle, texArcherBattle, texMageBattle;
+	sf::Texture texMonsterBattle, texBossBattle;
+	if (!texSoldierBattle.loadFromFile("assets/soldier_battle.png")) cerr << "Warn: missing assets/soldier_battle.png\n";
+	if (!texArcherBattle.loadFromFile("assets/archer_battle.png")) 	cerr << "Warn: missing assets/archer_battle.png\n";
+	if (!texMageBattle.loadFromFile("assets/mage_battle.png")) 		cerr << "Warn: missing assets/mage_battle.png\n";
+	if (!texMonsterBattle.loadFromFile("assets/monster_battle.png")) cerr << "Warn: missing assets/monster_battle.png\n";
+	if (!texBossBattle.loadFromFile("assets/boss_battle.png")) 		cerr << "Warn: missing assets/boss_battle.png\n";
+	
+
 	sf::Font font;
 	bool fontOk = true;
-	if (!font.loadFromFile("assets/Arial.ttf")) {
-		cerr << "Warn: missing assets/Arial.ttf (UI labels will be empty). Put a TTF at assets/Arial.ttf\n";
+	if (!font.loadFromFile("assets/font.ttf")) {
+		cerr << "Warn: missing assets/font.ttf (UI labels will be empty). Put a TTF at assets/font.ttf\n";
 		fontOk = false;
 	}
 
@@ -507,7 +114,7 @@ int main() {
 
 	// Battle state containers
 	GameState state = GameState::MainMenu; // Start at Main Menu
-	std::string battleMessage; // <-- ADD: For the new battle log
+	std::string battleMessage; // For the new battle log
 	// Enemy is now a unique_ptr to handle polymorphism (Monster or Boss)
 	std::unique_ptr<Enemy> currentEnemy = nullptr; 
 	std::unique_ptr<CombatSystem> combatSystem = nullptr;
@@ -541,32 +148,42 @@ int main() {
 	};
 
 	// --- Main Menu UI (UIManager) ---
-	sf::Text titleText("RogueEmblem", font, 48);
+	sf::Text titleText("FireEmblem", font, 48); // Renamed title
 	titleText.setFillColor(sf::Color::White);
 	titleText.setPosition(WINDOW_W/2 - titleText.getLocalBounds().width/2, 100);
 	sf::Text subtitleText("Select your class:", font, 24);
 	subtitleText.setFillColor(sf::Color::White);
 	subtitleText.setPosition(WINDOW_W/2 - subtitleText.getLocalBounds().width/2, 180);
 
+	// --- ADD: Battle Sprites ---
+	sf::Sprite playerBattleSprite;
+	sf::Sprite enemyBattleSprite;
+
 	vector<Button> menuButtons;
 	menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, [&](){
 		player = std::make_unique<Soldier>(playerR, playerC);
+		playerBattleSprite.setTexture(texSoldierBattle); // <-- SET TEXTURE
+		playerBattleSprite.setPosition(100, 200); // <-- SET POSITION
 		state = GameState::Exploring;
 	}));
 	menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 320, 200, 50, "Archer", font, [&](){
 		player = std::make_unique<Archer>(playerR, playerC);
+		playerBattleSprite.setTexture(texArcherBattle); // <-- SET TEXTURE
+		playerBattleSprite.setPosition(100, 200); // <-- SET POSITION
 		state = GameState::Exploring;
 	}));
 	menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 390, 200, 50, "Mage", font, [&](){
 		player = std::make_unique<Mage>(playerR, playerC);
+		playerBattleSprite.setTexture(texMageBattle); // <-- SET TEXTURE
+		playerBattleSprite.setPosition(100, 200); // <-- SET POSITION
 		state = GameState::Exploring;
 	}));
 
 	// --- Battle UI Buttons ---
 	vector<Button> battleButtons;
 	const float btnW = 160, btnH = 40;
-	float baseY = ROWS * TILE_SIZE + 30; // <-- This is the old Y
-	float battleBtnY = WINDOW_H - 70.f; // <-- ADD: New Y for battle screen
+	//float baseY = ROWS * TILE_SIZE + 30; // <-- This is the old Y
+	float battleBtnY = WINDOW_H - 70.f; // <-- New Y for battle screen
 
 	// Helper to start a battle at tile r,c
 	auto startBattle = [&](int r, int c, bool isBoss){
@@ -574,14 +191,19 @@ int main() {
 		
 		if (isBoss) {
 			 currentEnemy = std::make_unique<Boss>("Dungeon Lord", 3, 100, 15, 8);
+			 enemyBattleSprite.setTexture(texBossBattle); // <-- SET TEXTURE
 		} else {
 			// Randomly spawn a Monster or a small Boss for variety
 			if (D20().roll() > 15) {
 				 currentEnemy = std::make_unique<Boss>("Ogre", 1, 25, 10, 5);
+				 enemyBattleSprite.setTexture(texBossBattle); // <-- SET TEXTURE
 			} else {
 				 currentEnemy = std::make_unique<Monster>("Goblin", 18, 5, 2);
+				 enemyBattleSprite.setTexture(texMonsterBattle); // <-- SET TEXTURE
 			}
 		}
+		// enemyBattleSprite.setPosition(WINDOW_W - 350, 150); // <-- OLD BUGGY POSITION
+		enemyBattleSprite.setPosition(WINDOW_W - 200 - 100, 150); // <-- NEW POSITION (width 200, margin 100)
 		
 		combatSystem = std::make_unique<CombatSystem>(player.get(), currentEnemy.get(), std::cout);
 		enemyRow = r; enemyCol = c;
@@ -614,7 +236,7 @@ int main() {
 
 	// --- Setup Battle Buttons ---
 	// Attack Button
-	battleButtons.push_back(makeButton(20, battleBtnY, btnW, btnH, "Attack", font, [&](){ // <-- UPDATE: baseY to battleBtnY
+	battleButtons.push_back(makeButton(20, battleBtnY, btnW, btnH, "Attack", font, [&](){ // <-- UPDATE: Y position
 		if (state != GameState::InBattle || !combatSystem) return;
 		battleMessage = player->name + " attacks!\n"; // <-- ADD
 		combatSystem->attack();
@@ -631,7 +253,7 @@ int main() {
 	}));
 
 	// Defend Button
-	battleButtons.push_back(makeButton(210, battleBtnY, btnW, btnH, "Defend", font, [&](){ // <-- UPDATE: baseY to battleBtnY
+	battleButtons.push_back(makeButton(210, battleBtnY, btnW, btnH, "Defend", font, [&](){ // <-- UPDATE: Y position
 		if (state != GameState::InBattle || !combatSystem) return;
 		battleMessage = player->name + " defends!\n"; // <-- ADD
 		combatSystem->defend();
@@ -643,7 +265,7 @@ int main() {
 	}));
 
 	// Ability Button
-	battleButtons.push_back(makeButton(400, battleBtnY, btnW, btnH, "Ability", font, [&](){ // <-- UPDATE: baseY to battleBtnY
+	battleButtons.push_back(makeButton(400, battleBtnY, btnW, btnH, "Ability", font, [&](){ // <-- UPDATE: Y position
 		if (state != GameState::InBattle || !combatSystem) return;
 		battleMessage = player->name + " uses ability!\n"; // <-- ADD
 		combatSystem->ability();
@@ -660,7 +282,7 @@ int main() {
 	}));
 
 	// Run Button
-	battleButtons.push_back(makeButton(590, battleBtnY, btnW, btnH, "Run", font, [&](){ // <-- UPDATE: baseY to battleBtnY
+	battleButtons.push_back(makeButton(590, battleBtnY, btnW, btnH, "Run", font, [&](){ // <-- UPDATE: Y position
 		if (state != GameState::InBattle || !combatSystem) return;
 		if (combatSystem->run()) {
 			// Success: state set to Exploring, pointers cleared
@@ -683,14 +305,6 @@ int main() {
 	}));
 
 	// --- Battle Screen UI Elements ---
-	sf::RectangleShape playerBox(sf::Vector2f(250, 300));
-	playerBox.setFillColor(sf::Color(80, 90, 180, 200));
-	playerBox.setPosition(100, 200);
-
-	sf::RectangleShape enemyBox(sf::Vector2f(250, 300));
-	enemyBox.setFillColor(sf::Color(180, 70, 70, 200));
-	enemyBox.setPosition(WINDOW_W - 350, 150);
-
 	sf::Text playerBattleName, enemyBattleName, battleLogText;
 	if(fontOk) {
 		playerBattleName.setFont(font);
@@ -781,10 +395,15 @@ int main() {
 							// Check tile events (MonsterTile, BossTile, ExitTile)
 							t->onEnter(player.get()); // Call UML's onEnter(Player*)
 							
-							if (t->isMonster() && dynamic_cast<MonsterTile*>(t)->shouldTriggerCombat()) {
-								startBattle(nr, nc, false); // Start monster battle
-							} else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
-								startBattle(nr, nc, true); // Start BOSS battle
+							// Check for dynamic_cast to get derived class methods
+							if (MonsterTile* mt = dynamic_cast<MonsterTile*>(t)) {
+								if (mt->shouldTriggerCombat()) {
+									startBattle(nr, nc, false); // Start monster battle
+								}
+							} else if (BossTile* bt = dynamic_cast<BossTile*>(t)) {
+								if (bt->shouldTriggerCombat()) {
+									startBattle(nr, nc, true); // Start BOSS battle
+								}
 							} else if (t->isExit()) {
 								std::cout << "You reached the exit - Victory!\n";
 								state = GameState::Victory;
@@ -824,26 +443,26 @@ int main() {
 
 			// Exploring HUD
 			if (fontOk && player) {
-				string s = "Exploring. Move: WASD. Press SPACE to roll (d6). MovePoints: " + to_string(movePoints) + 
-						   " | " + player->name + " HP: " + to_string(player->hp) + "/" + to_string(player->maxHp);
+				string s = "Exploring. Move: WASD. Press SPACE to roll (d6). MovePoints: " + std::to_string(movePoints) + 
+						   " | " + player->name + " HP: " + std::to_string(player->hp) + "/" + std::to_string(player->maxHp);
 				sf::Text t(s, font, 16); t.setFillColor(sf::Color::White); t.setPosition(10, ROWS*TILE_SIZE + 10);
 				window.draw(t);
 			}
 		}
 		else if (state == GameState::InBattle) {
-			window.clear(sf::Color(40, 40, 60));
+			window.clear(sf::Color(40, 40, 60)); // Dark battle background
 
 			if (fontOk && player && currentEnemy) {
 				// Draw Player Box and Name
-				window.draw(playerBox);
+				window.draw(playerBattleSprite);
 				playerBattleName.setString(player->name);
-				playerBattleName.setPosition(playerBox.getPosition().x + 20, playerBox.getPosition().y - 70);
+				playerBattleName.setPosition(playerBattleSprite.getPosition().x + 20, playerBattleSprite.getPosition().y - 70);
 				window.draw(playerBattleName);
 
 				// Draw Enemy Box and Name
-				window.draw(enemyBox);
+				window.draw(enemyBattleSprite);
 				enemyBattleName.setString(currentEnemy->name);
-				enemyBattleName.setPosition(enemyBox.getPosition().x + 20, enemyBox.getPosition().y - 70);
+				enemyBattleName.setPosition(enemyBattleSprite.getPosition().x + 20, enemyBattleSprite.getPosition().y - 70);
 				window.draw(enemyBattleName);
 
 				// Draw Player HP Bar
@@ -901,5 +520,6 @@ int main() {
 		}
 		window.display();
 	}
+	
 	return 0;
 }
