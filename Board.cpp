@@ -11,10 +11,27 @@ Board::~Board() {
 }
 
 void Board::setTile(int r, int c, Tile* tile, sf::Texture& tex) {
-	if (!tile) return;
-	tile->getSprite().setTexture(tex);
-	tile->getSprite().setPosition(c * tileSize, r * tileSize);
-	grid[r][c] = tile;
+	if (r < 0 || r >= rows || c < 0 || c >= cols) return;
+
+    // Delete old tile if it exists
+    if (grid[r][c]) delete grid[r][c];
+
+    // Assign the new tile
+    grid[r][c] = tile;
+    
+    // --- FIX: Use ->getSprite() instead of ->sprite ---
+    grid[r][c]->getSprite().setTexture(tex);
+
+    // Calculate scaling for 800x900 resolution
+    sf::Vector2u texSize = tex.getSize();
+    float scaleX = this->tileSize / (float)texSize.x;
+    float scaleY = this->tileSize / (float)texSize.y;
+    
+    // --- FIX: Use ->getSprite() here too ---
+    grid[r][c]->getSprite().setScale(scaleX, scaleY);
+
+    // --- FIX: Use ->getSprite() for position ---
+    grid[r][c]->getSprite().setPosition(c * tileSize, r * tileSize);
 }
 
 Tile* Board::getTile(int r, int c) {
