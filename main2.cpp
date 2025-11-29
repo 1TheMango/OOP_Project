@@ -1,4 +1,3 @@
-
 //g++ main.cpp Dice.cpp Entity.cpp Enemy.cpp Player.cpp CombatSystem.cpp Tile.cpp Board.cpp -o RogueEmblem -lsfml-graphics -lsfml-window -lsfml-system
 
 #include <SFML/Graphics.hpp>
@@ -6,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <functional> // Required for std::function
 
 #include "Dice.h"
 #include "Player.h"
@@ -21,12 +21,8 @@ using namespace std;
 int main() {
     const int ROWS = 10, COLS = 10;
     
-    // --- RESOLUTION SETTINGS CHANGED HERE ---
-    // Tile size 80 * 10 Cols = 800 Width
     const float TILE_SIZE = 80.f; 
     const int WINDOW_W = int(COLS * TILE_SIZE);
-    
-    // Board is 800px tall. Added 100px for UI = 900 Height
     const int WINDOW_H = int(ROWS * TILE_SIZE + 100); 
 
     sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "RogueEmblem - OOP Project");
@@ -34,15 +30,15 @@ int main() {
 
     // Load textures
     sf::Texture texEmpty, texBlocked, texMonster, texBoss, texExit, texPlayer;
-    // Note: Ensure these images exist in your assets folder
     if (!texEmpty.loadFromFile("assets/normal.png"))    cerr << "Warn: missing assets/normal.png\n";
     if (!texBlocked.loadFromFile("assets/blocked.png")) cerr << "Warn: missing assets/blocked.png\n";
     if (!texMonster.loadFromFile("assets/monster.png")) cerr << "Warn: missing assets/monster.png\n";
     if (!texBoss.loadFromFile("assets/boss.png"))       cerr << "Warn: missing assets/boss.png\n";
     if (!texExit.loadFromFile("assets/exit.png"))       cerr << "Warn: missing assets/exit.png\n";
     if (!texPlayer.loadFromFile("assets/player2.jpg"))   cerr << "Warn: missing assets/player.png\n";
-	sf::Texture texBattleBg, texPortraitPlayer, texPortraitEnemy;
-    if (!texBattleBg.loadFromFile("assets/battle_bg.jpg"))          cerr << "Warn: missing assets/battle_bg.png\n";
+    
+    sf::Texture texBattleBg, texPortraitPlayer, texPortraitEnemy;
+    if (!texBattleBg.loadFromFile("assets/battle_bg.jpg"))           cerr << "Warn: missing assets/battle_bg.png\n";
     if (!texPortraitPlayer.loadFromFile("assets/portrait_player.jpg")) cerr << "Warn: missing assets/portrait_player.png\n";
     if (!texPortraitEnemy.loadFromFile("assets/portrait_enemy.png"))   cerr << "Warn: missing assets/portrait_enemy.png\n";
 
@@ -53,40 +49,91 @@ int main() {
         fontOk = false;
     }
 
-    // Create board and load level
-    Board board(ROWS, COLS, TILE_SIZE);
-    char LEVEL[10][10] = {
-        {'P','N','N','N','B','N','N','N','N','N'},
-        {'N','B','B','N','B','N','M','N','B','N'},
-        {'N','N','N','N','B','B','N','N','N','N'},
-        {'N','B','N','B','N','B','N','B','N','N'},
-        {'N','N','N','N','N','N','N','B','N','N'},
-        {'N','B','N','N','B','N','N','N','N','N'},
-        {'N','N','B','B','N','B','N','N','B','N'},
-        {'B','N','N','N','N','N','N','N','N','N'},
-        {'B','B','N','N','N','N','B','N','M','B'},
-        {'E','N','N','N','B','N','N','N','N','T'}
+    // --- LEVEL DATA DEFINITIONS ---
+    // P = Player Start, N = Normal, B = Blocked, M = Monster, T = Boss, E = Exit
+    vector<vector<string>> allLevels = {
+        // LEVEL 1: The original introduction
+        {
+            "PNNNBNNNNN",
+            "NBBNBNMNBN",
+            "NNNNBBNNNN",
+            "NBNBNBNBNN",
+            "NNNNNNNBNN",
+            "NBNNBNNNNN",
+            "NNBBNBNNBN",
+            "BNNNNNNNNN",
+            "BBNNNNBNMB",
+            "ENNNBNNNNT" // Note: Put Exit closer for testing, but T is Boss
+        },
+        // LEVEL 2: The Maze (More walls, tighter corridors)
+        {
+            "PBBBNNNNNN",
+            "NBBBNBBNBN",
+            "NNNNNBBMMM", // Cluster of monsters
+            "BBBBBBBBNB",
+            "NNNNNNNNNB",
+            "NBBNBBBBBB",
+            "NBBMMNNNNN",
+            "NNNBBBBBNB",
+            "BNNNNNNNNB",
+            "BBBBBBBNET" // Boss guarding Exit
+        },
+        // LEVEL 3: The Gauntlet (Boss heavy)
+        {
+            "PNNMNNNMNN",
+            "BBNBNBNBBN",
+            "NNNBNBNBNN",
+            "MBBBBBBBBM",
+            "NNNNNNNNNN",
+            "TBBBNBNBBT", // Two bosses guarding the middle
+            "NNNBNBNBNN",
+            "BBBBBBBBBB",
+            "NNMNNNNMNN",
+            "NNNNETNNNN" // Final Boss right next to exit
+        }
     };
 
-    int playerR = 0, playerC = 0;
-    for (int r=0; r<ROWS; r++){
-        for (int c=0; c<COLS; c++){
-            char ch = LEVEL[r][c];
-            if (ch=='N') board.setTile(r,c,new EmptyTile(), texEmpty); 
-            else if (ch=='B') board.setTile(r,c,new BlockedTile(), texBlocked);
-            else if (ch=='M') board.setTile(r,c,new MonsterTile(), texMonster);
-            else if (ch=='T') board.setTile(r,c,new BossTile(), texBoss);
-            else if (ch=='E') board.setTile(r,c,new ExitTile(), texExit);
-            else if (ch=='P') { board.setTile(r,c,new EmptyTile(), texEmpty); playerR=r; playerC=c; }
+    int currentLevelIndex = 0;
+    int playerStartR = 0, playerStartC = 0; // To store where player spawns in current level
+
+    // Create board
+    Board board(ROWS, COLS, TILE_SIZE);
+
+    // --- LEVEL LOADING FUNCTION ---
+    auto loadLevel = [&](int levelIdx) {
+        if(levelIdx >= allLevels.size()) return;
+
+        const vector<string>& layout = allLevels[levelIdx];
+        
+        for (int r=0; r<ROWS; r++){
+            for (int c=0; c<COLS; c++){
+                char ch = layout[r][c];
+                // Default to empty if char not recognized
+                if (ch=='N') board.setTile(r,c,new EmptyTile(), texEmpty); 
+                else if (ch=='B') board.setTile(r,c,new BlockedTile(), texBlocked);
+                else if (ch=='M') board.setTile(r,c,new MonsterTile(), texMonster);
+                else if (ch=='T') board.setTile(r,c,new BossTile(), texBoss);
+                else if (ch=='E') board.setTile(r,c,new ExitTile(), texExit);
+                else if (ch=='P') { 
+                    board.setTile(r,c,new EmptyTile(), texEmpty); 
+                    playerStartR = r; 
+                    playerStartC = c; 
+                }
+                else {
+                    board.setTile(r,c,new EmptyTile(), texEmpty);
+                }
+            }
         }
-    }
+        cout << "Loaded Level " << levelIdx + 1 << endl;
+    };
+
+    // Load the first level initially
+    loadLevel(currentLevelIndex);
 
     unique_ptr<Player> player = nullptr;
     
     sf::Sprite playerSprite; 
     playerSprite.setTexture(texPlayer); 
-    // --- UPDATED SCALE ---
-    // Scaled up to 1.25x so it fits nicely in the 80px tiles (assuming source is 64px)
     playerSprite.setScale(1.25f, 1.25f);
 
     int movePoints = 0;
@@ -126,22 +173,25 @@ int main() {
     subtitleText.setPosition(WINDOW_W/2 - subtitleText.getLocalBounds().width/2, 180);
 
     vector<Button> menuButtons;
+    // Note: We use playerStartR/C determined by loadLevel(0)
     menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, [&](){
-        player = make_unique<Soldier>(playerR, playerC);
+        player = make_unique<Soldier>(playerStartR, playerStartC);
         state = GameState::Exploring;
+        playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
     menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 320, 200, 50, "Archer", font, [&](){
-        player = make_unique<Archer>(playerR, playerC);
+        player = make_unique<Archer>(playerStartR, playerStartC);
         state = GameState::Exploring;
+        playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
     menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 390, 200, 50, "Mage", font, [&](){
-        player = make_unique<Mage>(playerR, playerC);
+        player = make_unique<Mage>(playerStartR, playerStartC);
         state = GameState::Exploring;
+        playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
 
     vector<Button> battleButtons;
     const float btnW = 160, btnH = 40;
-    // Adjusted Y position to stay near bottom of the 900px window
     float battleBtnY = WINDOW_H - 70.f;
 
     auto startBattle = [&](int r, int c, bool isBoss){
@@ -150,10 +200,14 @@ int main() {
         if (isBoss) {
              currentEnemy = make_unique<Boss>("Dungeon Lord", 3, 100, 15, 8);
         } else {
+            // Slight difficulty increase per level for random monsters
+            int hpBonus = currentLevelIndex * 5;
+            int atkBonus = currentLevelIndex * 2;
+
             if (D20().roll() > 15) {
-                 currentEnemy = make_unique<Boss>("Ogre", 1, 25, 10, 5);
+                 currentEnemy = make_unique<Boss>("Ogre", 1, 25 + hpBonus, 10 + atkBonus, 5);
             } else {
-                 currentEnemy = make_unique<Monster>("Goblin", 18, 5, 2);
+                 currentEnemy = make_unique<Monster>("Goblin", 18, 5 + hpBonus, 2 + atkBonus);
             }
         }
         
@@ -184,7 +238,7 @@ int main() {
         }
     };
 
-    // Battle buttons
+    // Battle buttons (Attack, Defend, Ability, Run)
     battleButtons.push_back(makeButton(20, battleBtnY, btnW, btnH, "Attack", font, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         battleMessage = player->name + " attacks!\n";
@@ -251,16 +305,13 @@ int main() {
 
     // Battle screen UI elements
     sf::RectangleShape playerBox(sf::Vector2f(250, 300));
-    playerBox.setTexture(&texPortraitPlayer);              
+    playerBox.setTexture(&texPortraitPlayer);               
     playerBox.setPosition(100, 200);
-    playerBox.setPosition(100, 200);
-	sf::RectangleShape battleBgRect(sf::Vector2f(WINDOW_W, WINDOW_H));
+    sf::RectangleShape battleBgRect(sf::Vector2f(WINDOW_W, WINDOW_H));
     battleBgRect.setTexture(&texBattleBg);
 
     sf::RectangleShape enemyBox(sf::Vector2f(250, 300));
     enemyBox.setTexture(&texPortraitEnemy);     
-    enemyBox.setPosition(WINDOW_W - 350, 150);
-    // Adjusted position relative to new width
     enemyBox.setPosition(WINDOW_W - 350, 150);
 
     sf::Text playerBattleName, enemyBattleName, battleLogText;
@@ -303,9 +354,7 @@ int main() {
                     for (auto &b : menuButtons) {
                         if (b.contains(mp)) {
                             b.onClick();
-                            if (player) {
-                                playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
-                            }
+                            // Player created in onClick
                             break;
                         }
                     }
@@ -350,8 +399,27 @@ int main() {
                             } else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
                                 startBattle(nr, nc, true);
                             } else if (t->isExit()) {
-                                cout << "You reached the exit - Victory!\n";
-                                state = GameState::Victory;
+                                // --- LEVEL TRANSITION LOGIC ---
+                                if (currentLevelIndex < allLevels.size() - 1) {
+                                    // Go to next level
+                                    cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding to Level " << currentLevelIndex + 2 << "...\n";
+                                    currentLevelIndex++;
+                                    
+                                    // Load new map
+                                    loadLevel(currentLevelIndex);
+                                    
+                                    // Update player coordinates to the new 'P' location found in loadLevel
+                                    player->posR = playerStartR;
+                                    player->posC = playerStartC;
+                                    playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
+                                    
+                                    // Optional: Reset move points or give a bonus
+                                    movePoints = 0; 
+                                } else {
+                                    // Last level cleared
+                                    cout << "You reached the exit - Victory!\n";
+                                    state = GameState::Victory;
+                                }
                             }
                         }
                     }
@@ -385,11 +453,10 @@ int main() {
             window.draw(playerSprite);
 
             if (fontOk && player) {
-                string s = "Exploring. Move: WASD. Press SPACE to roll (d6). MovePoints: " + to_string(movePoints) + 
+                string s = "Lvl " + to_string(currentLevelIndex+1) + " | Move: WASD | SPACE(roll): " + to_string(movePoints) + 
                            " | " + player->name + " HP: " + to_string(player->hp) + "/" + to_string(player->maxHp);
                 sf::Text t(s, font, 16); 
                 t.setFillColor(sf::Color::White); 
-                // Adjusted text position for 900 height
                 t.setPosition(10, ROWS*TILE_SIZE + 10);
                 window.draw(t);
             }
@@ -439,7 +506,7 @@ int main() {
             overlay.setFillColor(sf::Color(0,0,0,180));
             window.draw(overlay);
             if (fontOk) {
-                sf::Text go("GAME OVER (YOU DIED)", font, 48); 
+                sf::Text go("GAME OVER", font, 48); 
                 go.setFillColor(sf::Color::Red);
                 sf::FloatRect goRect = go.getLocalBounds();
                 go.setPosition(WINDOW_W/2 - goRect.width/2 - goRect.left, WINDOW_H/2 - goRect.height/2 - goRect.top);
@@ -451,7 +518,7 @@ int main() {
             overlay.setFillColor(sf::Color(0,255,0,200));
             window.draw(overlay);
             if (fontOk) {
-                sf::Text txt("VICTORY", font, 48); 
+                sf::Text txt("ALL LEVELS CLEARED!\n      VICTORY", font, 48); 
                 txt.setFillColor(sf::Color::Black);
                 sf::FloatRect txtRect = txt.getLocalBounds();
                 txt.setPosition(WINDOW_W/2 - txtRect.width/2 - txtRect.left, WINDOW_H/2 - txtRect.height/2 - txtRect.top);
