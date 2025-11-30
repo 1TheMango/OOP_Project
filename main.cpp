@@ -2,8 +2,8 @@
 #include <iostream>
 #include <vector>
 #include <string>
-// REMOVED: #include <memory> 
 #include <functional>
+#include <algorithm> // For min/max
 
 #include "Dice.h"
 #include "Player.h"
@@ -65,7 +65,6 @@ void loadLevel(int levelIdx, const vector<vector<string>>& allLevels, Board& boa
 }
 
 // --- HELPER FUNCTION: START BATTLE ---
-// UPDATED: Using raw pointers and references to pointers (*&) for output parameters
 void startBattle(int r, int c, bool isBoss, int levelIndex, 
                  Player* player, Enemy*& curEnemy, 
                  CombatSystem*& combatSys, 
@@ -77,11 +76,14 @@ void startBattle(int r, int c, bool isBoss, int levelIndex,
     if (combatSys) { delete combatSys; combatSys = nullptr; }
 
     if (isBoss) {
-        curEnemy = new Boss("Dungeon Lord", 3, 100, 15, 8);
+        int hpBonus = levelIndex * 3;
+        int atkBonus = levelIndex * 2;
+        curEnemy = new Boss("Dungeon Lord", 3, 45 + hpBonus,6+ atkBonus , 8);
     } else {
         int hpBonus = levelIndex * 5;
         int atkBonus = levelIndex * 2;
-        if (D20().roll() > 15) curEnemy = new Boss("Ogre", 1, 25 + hpBonus, 10 + atkBonus, 5);
+        // UPDATED: Ogre is now a Monster class, not Boss class
+        if (D20().roll() > 15) curEnemy = new Monster("Ogre", 1, 35 + hpBonus, 6 + atkBonus);
         else curEnemy = new Monster("Goblin", 18, 5 + hpBonus, 2 + atkBonus);
     }
     
@@ -95,18 +97,24 @@ void startBattle(int r, int c, bool isBoss, int levelIndex,
 }
 
 // --- HELPER FUNCTION: CHECK BATTLE END ---
-// UPDATED: Using raw pointers and references to pointers (*&)
+// UPDATED: Now uses 'isLevelBossBattle' to determine if exit should open
 void checkBattleEnd(Player* player, Enemy*& curEnemy, 
                     CombatSystem*& combatSys, 
                     Board& board, int enemyR, int enemyC, 
-                    sf::Texture& tEmpty, GameState& state)
+                    sf::Texture& tEmpty, GameState& state, 
+                    bool& bossDefeated, bool isLevelBossBattle)
 {
     if (!curEnemy || !combatSys) return;
 
     if (combatSys->isEnemyDefeated()) {
         cout << curEnemy->name << " defeated! Player gains 5 HP.\n";
         player->hp = min(player->hp + 5, player->maxHp);
-        
+
+        if (isLevelBossBattle) {
+            bossDefeated = true;
+            cout << ">>> DUNGEON BOSS DEFEATED! The Exit is now UNLOCKED! <<<\n";
+        }
+
         board.replaceWithEmpty(enemyR, enemyC, tEmpty);
 
         // MANUAL DELETE
@@ -146,7 +154,7 @@ int main() {
     if (!texBattleBg.loadFromFile("assets/battle_bg.jpg"))           cerr << "Warn: missing assets/battle_bg.png\n";
     if (!texPortraitPlayer.loadFromFile("assets/portrait_player.jpg")) cerr << "Warn: missing assets/portrait_player.png\n";
     if (!texPortraitEnemy.loadFromFile("assets/portrait_enemy.png"))   cerr << "Warn: missing assets/portrait_enemy.png\n";
-
+    
     sf::Font font;
     bool fontOk = true;
     if (!font.loadFromFile("assets/Arial.ttf")) {
@@ -169,7 +177,6 @@ int main() {
     loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
               texEmpty, texBlocked, texMonster, texBoss, texExit);
 
-    // UPDATED: Using raw pointers
     Player* player = nullptr;
     
     sf::Sprite playerSprite; 
@@ -179,7 +186,10 @@ int main() {
     GameState state = GameState::MainMenu;
     string battleMessage;
     
-    // UPDATED: Using raw pointers
+    // FLAGS
+    bool levelBossDefeated = false;     // Does exit open?
+    bool isFightingLevelBoss = false;   // Is current fight against level boss?
+
     Enemy* currentEnemy = nullptr; 
     CombatSystem* combatSystem = nullptr;
     
@@ -222,17 +232,18 @@ int main() {
     const float btnW = 160, btnH = 40;
     float battleBtnY = WINDOW_H - 70.f;
 
+    // UPDATE: Passed isFightingLevelBoss to checkBattleEnd calls
     battleButtons.push_back(createButton(20, battleBtnY, btnW, btnH, "Attack", font, fontOk, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         battleMessage = player->name + " attacks!\n";
         combatSystem->attack();
         
-        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
         
         if (state == GameState::InBattle) { 
             battleMessage += "Enemy attacks!\n";
             combatSystem->enemyTurn();
-            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
             if(state == GameState::InBattle) battleMessage += "Your turn.";
             else if (state == GameState::GameOver) battleMessage += "You were defeated!";
         } else if (state == GameState::Exploring) battleMessage += "You won the battle!";
@@ -244,7 +255,7 @@ int main() {
         combatSystem->defend();
         battleMessage += "Enemy attacks!\n";
         combatSystem->enemyTurn();
-        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
         if(state == GameState::InBattle) battleMessage += "Your turn.";
         else if (state == GameState::GameOver) battleMessage += "You were defeated!";
     }));
@@ -253,11 +264,11 @@ int main() {
         if (state != GameState::InBattle || !combatSystem) return;
         battleMessage = player->name + " uses ability!\n";
         combatSystem->ability();
-        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
         if (state == GameState::InBattle) { 
             battleMessage += "Enemy attacks!\n";
             combatSystem->enemyTurn();
-            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
             if(state == GameState::InBattle) battleMessage += "Your turn.";
             else if (state == GameState::GameOver) battleMessage += "You were defeated!";
         } else if (state == GameState::Exploring) battleMessage += "You won the battle!";
@@ -279,7 +290,7 @@ int main() {
         } else {
             battleMessage = "Run failed!\nEnemy attacks!\n";
             combatSystem->enemyTurn();
-            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
             if(state == GameState::InBattle) battleMessage += "Your turn.";
             else if (state == GameState::GameOver) battleMessage += "You were defeated!";
         }
@@ -356,20 +367,30 @@ int main() {
                             player->posR = nr; player->posC = nc;
                             playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
                             movePoints--;
-                            t->onEnter(player); // Passing raw pointer
+                            t->onEnter(player); 
                             
                             if (t->isMonster() && dynamic_cast<MonsterTile*>(t)->shouldTriggerCombat()) {
+                                isFightingLevelBoss = false; // Normal monster
                                 startBattle(nr, nc, false, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
                             }
                             else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
+                                isFightingLevelBoss = true; // This is the level boss
                                 startBattle(nr, nc, true, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
                             }
                             else if (t->isExit()) {
-                                if (currentLevelIndex < allLevels.size() - 1) {
+                                // UPDATE: Check if boss is defeated before allowing exit
+                                if (!levelBossDefeated) {
+                                    cout << "[LOCKED] The exit is locked! You must defeat the Boss ('T') first.\n";
+                                }
+                                else if (currentLevelIndex < allLevels.size() - 1) {
                                     cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding...\n";
                                     currentLevelIndex++;
+                                    
+                                    // RESET BOSS FLAG FOR NEW LEVEL
+                                    levelBossDefeated = false; 
+
                                     loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
-                                              texEmpty, texBlocked, texMonster, texBoss, texExit);
+                                                texEmpty, texBlocked, texMonster, texBoss, texExit);
                                     player->posR = playerStartR; player->posC = playerStartC;
                                     playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
                                     movePoints = 0; 
@@ -408,6 +429,11 @@ int main() {
             if (fontOk && player) {
                 string s = "Lvl " + to_string(currentLevelIndex+1) + " | Move: WASD | SPACE(roll): " + to_string(movePoints) + 
                            " | " + player->name + " HP: " + to_string(player->hp) + "/" + to_string(player->maxHp);
+                
+                // Add Lock Status to UI
+                if (!levelBossDefeated) s += " | Exit: LOCKED";
+                else s += " | Exit: OPEN";
+
                 sf::Text t(s, font, 16); t.setFillColor(sf::Color::White); t.setPosition(10, ROWS*TILE_SIZE + 10);
                 window.draw(t);
             }
@@ -470,8 +496,7 @@ int main() {
         }
         window.display();
     }
-    
-    // Final cleanup
+
     if (player) delete player;
     if (currentEnemy) delete currentEnemy;
     if (combatSystem) delete combatSystem;
