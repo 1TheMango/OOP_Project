@@ -50,5 +50,12 @@ void Board::replaceWithEmpty(int r, int c, sf::Texture& texEmpty) {
 	delete grid[r][c];
 	grid[r][c] = new EmptyTile();
 	grid[r][c]->getSprite().setTexture(texEmpty);
+
+	sf::Vector2u texSize = texEmpty.getSize();
+    float scaleX = this->tileSize / (float)texSize.x;
+    float scaleY = this->tileSize / (float)texSize.y;
+    
+    // --- FIX: Use ->getSprite() here too ---
+    grid[r][c]->getSprite().setScale(scaleX, scaleY);
 	grid[r][c]->getSprite().setPosition(c * tileSize, r * tileSize);
 }
