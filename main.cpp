@@ -329,8 +329,13 @@ int main() {
                 if (!player) { state = GameState::MainMenu; continue; }
 
                 if (ev.type == sf::Event::KeyPressed && ev.key.code == sf::Keyboard::Space) {
-                    D6 moveDice; movePoints = moveDice.roll();
+                    D6 moveDice;
+                    if(movePoints>0){
+                        cout<<"you have movepoints"<<endl;
+                    }else{
+                    movePoints = moveDice.roll();
                     cout << "[Movement] Rolled d6 = " << movePoints << " move points\n";
+                    }
                 }
                 
                 if (ev.type == sf::Event::KeyPressed && movePoints > 0) {
