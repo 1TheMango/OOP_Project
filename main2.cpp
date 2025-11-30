@@ -1,11 +1,9 @@
-//g++ main.cpp Dice.cpp Entity.cpp Enemy.cpp Player.cpp CombatSystem.cpp Tile.cpp Board.cpp -o RogueEmblem -lsfml-graphics -lsfml-window -lsfml-system
-
 #include <SFML/Graphics.hpp>
 #include <iostream>
 #include <vector>
 #include <string>
-#include <memory>
-#include <functional> // Required for std::function
+// REMOVED: #include <memory> 
+#include <functional>
 
 #include "Dice.h"
 #include "Player.h"
@@ -18,9 +16,116 @@
 
 using namespace std;
 
+// --- HELPER FUNCTION: CREATE BUTTON ---
+Button createButton(float x, float y, float w, float h, const string& txt, sf::Font& font, bool fontOk, function<void()> cb) {
+    Button b;
+    b.rect = sf::RectangleShape(sf::Vector2f(w, h));
+    b.rect.setPosition(x, y);
+    b.rect.setFillColor(sf::Color(70, 70, 70));
+    b.rect.setOutlineThickness(1.f);
+    b.rect.setOutlineColor(sf::Color::Black);
+
+    if (fontOk) {
+        b.label.setFont(font);
+        b.label.setString(txt);
+        b.label.setCharacterSize(18);
+        b.label.setFillColor(sf::Color::White);
+        sf::FloatRect lb = b.label.getLocalBounds();
+        b.label.setPosition(x + (w - lb.width) / 2 - lb.left, y + (h - lb.height) / 2 - lb.top);
+    }
+    b.onClick = cb;
+    return b;
+}
+
+// --- HELPER FUNCTION: LOAD LEVEL ---
+void loadLevel(int levelIdx, const vector<vector<string>>& allLevels, Board& board, 
+               int rows, int cols, int& pStartR, int& pStartC,
+               sf::Texture& tEmpty, sf::Texture& tBlocked, 
+               sf::Texture& tMonster, sf::Texture& tBoss, sf::Texture& tExit) 
+{
+    if(levelIdx >= allLevels.size()) return;
+    const vector<string>& layout = allLevels[levelIdx];
+    
+    for (int r = 0; r < rows; r++){
+        for (int c = 0; c < cols; c++){
+            char ch = layout[r][c];
+            if (ch=='N') board.setTile(r,c,new EmptyTile(), tEmpty); 
+            else if (ch=='B') board.setTile(r,c,new BlockedTile(), tBlocked);
+            else if (ch=='M') board.setTile(r,c,new MonsterTile(), tMonster);
+            else if (ch=='T') board.setTile(r,c,new BossTile(), tBoss);
+            else if (ch=='E') board.setTile(r,c,new ExitTile(), tExit);
+            else if (ch=='P') { 
+                board.setTile(r,c,new EmptyTile(), tEmpty); 
+                pStartR = r; pStartC = c; 
+            }
+            else board.setTile(r,c,new EmptyTile(), tEmpty);
+        }
+    }
+    cout << "Loaded Level " << levelIdx + 1 << endl;
+}
+
+// --- HELPER FUNCTION: START BATTLE ---
+// UPDATED: Using raw pointers and references to pointers (*&) for output parameters
+void startBattle(int r, int c, bool isBoss, int levelIndex, 
+                 Player* player, Enemy*& curEnemy, 
+                 CombatSystem*& combatSys, 
+                 int& enemyR, int& enemyC, GameState& state, string& msg)
+{
+    cout << "\n--- Battle start ---\n";
+    // Clean up previous enemy if any (safety check)
+    if (curEnemy) { delete curEnemy; curEnemy = nullptr; }
+    if (combatSys) { delete combatSys; combatSys = nullptr; }
+
+    if (isBoss) {
+        curEnemy = new Boss("Dungeon Lord", 3, 100, 15, 8);
+    } else {
+        int hpBonus = levelIndex * 5;
+        int atkBonus = levelIndex * 2;
+        if (D20().roll() > 15) curEnemy = new Boss("Ogre", 1, 25 + hpBonus, 10 + atkBonus, 5);
+        else curEnemy = new Monster("Goblin", 18, 5 + hpBonus, 2 + atkBonus);
+    }
+    
+    combatSys = new CombatSystem(player, curEnemy, cout);
+    enemyR = r; 
+    enemyC = c;
+    state = GameState::InBattle;
+    
+    player->resetDefend();
+    msg = "Battle started! " + player->name + " vs " + curEnemy->name;
+}
+
+// --- HELPER FUNCTION: CHECK BATTLE END ---
+// UPDATED: Using raw pointers and references to pointers (*&)
+void checkBattleEnd(Player* player, Enemy*& curEnemy, 
+                    CombatSystem*& combatSys, 
+                    Board& board, int enemyR, int enemyC, 
+                    sf::Texture& tEmpty, GameState& state)
+{
+    if (!curEnemy || !combatSys) return;
+
+    if (combatSys->isEnemyDefeated()) {
+        cout << curEnemy->name << " defeated! Player gains 5 HP.\n";
+        player->hp = min(player->hp + 5, player->maxHp);
+        
+        board.replaceWithEmpty(enemyR, enemyC, tEmpty);
+
+        // MANUAL DELETE
+        delete curEnemy; curEnemy = nullptr;
+        delete combatSys; combatSys = nullptr;
+        
+        state = GameState::Exploring;
+    } else if (combatSys->isPlayerDefeated()) {
+        cout << player->name << " died. Game Over.\n";
+        state = GameState::GameOver;
+        
+        // MANUAL DELETE
+        delete curEnemy; curEnemy = nullptr;
+        delete combatSys; combatSys = nullptr;
+    }
+}
+
 int main() {
     const int ROWS = 10, COLS = 10;
-    
     const float TILE_SIZE = 80.f; 
     const int WINDOW_W = int(COLS * TILE_SIZE);
     const int WINDOW_H = int(ROWS * TILE_SIZE + 100); 
@@ -28,14 +133,14 @@ int main() {
     sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "RogueEmblem - OOP Project");
     window.setFramerateLimit(60);
 
-    // Load textures
+    // --- ASSET LOADING ---
     sf::Texture texEmpty, texBlocked, texMonster, texBoss, texExit, texPlayer;
     if (!texEmpty.loadFromFile("assets/normal.png"))    cerr << "Warn: missing assets/normal.png\n";
     if (!texBlocked.loadFromFile("assets/blocked.png")) cerr << "Warn: missing assets/blocked.png\n";
     if (!texMonster.loadFromFile("assets/monster.png")) cerr << "Warn: missing assets/monster.png\n";
     if (!texBoss.loadFromFile("assets/boss.png"))       cerr << "Warn: missing assets/boss.png\n";
     if (!texExit.loadFromFile("assets/exit.png"))       cerr << "Warn: missing assets/exit.png\n";
-    if (!texPlayer.loadFromFile("assets/player2.jpg"))   cerr << "Warn: missing assets/player.png\n";
+    if (!texPlayer.loadFromFile("assets/player2.jpg"))  cerr << "Warn: missing assets/player.png\n";
     
     sf::Texture texBattleBg, texPortraitPlayer, texPortraitEnemy;
     if (!texBattleBg.loadFromFile("assets/battle_bg.jpg"))           cerr << "Warn: missing assets/battle_bg.png\n";
@@ -49,122 +154,38 @@ int main() {
         fontOk = false;
     }
 
-    // --- LEVEL DATA DEFINITIONS ---
-    // P = Player Start, N = Normal, B = Blocked, M = Monster, T = Boss, E = Exit
+    // --- LEVEL DATA ---
     vector<vector<string>> allLevels = {
-        // LEVEL 1: The original introduction
-        {
-            "PNNNBNNNNN",
-            "NBBNBNMNBN",
-            "NNNNBBNNNN",
-            "NBNBNBNBNN",
-            "NNNNNNNBNN",
-            "NBNNBNNNNN",
-            "NNBBNBNNBN",
-            "BNNNNNNNNN",
-            "BBNNNNBNMB",
-            "ENNNBNNNNT" // Note: Put Exit closer for testing, but T is Boss
-        },
-        // LEVEL 2: The Maze (More walls, tighter corridors)
-        {
-            "PBBBNNNNNN",
-            "NBBBNBBNBN",
-            "NNNNNBBMMM", // Cluster of monsters
-            "BBBBBBBBNB",
-            "NNNNNNNNNB",
-            "NBBNBBBBBB",
-            "NBBMMNNNNN",
-            "NNNBBBBBNB",
-            "BNNNNNNNNB",
-            "BBBBBBBNET" // Boss guarding Exit
-        },
-        // LEVEL 3: The Gauntlet (Boss heavy)
-        {
-            "PNNMNNNMNN",
-            "BBNBNBNBBN",
-            "NNNBNBNBNN",
-            "MBBBBBBBBM",
-            "NNNNNNNNNN",
-            "TBBBNBNBBT", // Two bosses guarding the middle
-            "NNNBNBNBNN",
-            "BBBBBBBBBB",
-            "NNMNNNNMNN",
-            "NNNNETNNNN" // Final Boss right next to exit
-        }
+        { "PNNNBNNNNN", "NBBNBNMNBN", "NNNNBBNNNN", "NBNBNBNBNN", "NNNNNNNBNN", "NBNNBNNNNN", "NNBBNBNNBN", "BNNNNNNNNN", "BBNNNNBNMB", "ENNNBNNNNT" },
+        { "PBBBNNNNNN", "NBBBNBBNBN", "NNNNNBBMMM", "BBBBBBBBNB", "NNNNNNNNNB", "NBBNBBBBBB", "NBBMMNNNNN", "NNNBBBBBNB", "BNNNNNNNNB", "BBBBBBBNET" },
+        { "PNNMNNNMNN", "BBNBNBNBBN", "NNNBNBNBNN", "MBBBBBBBBM", "NNNNNNNNNN", "TBBBNBNBBT", "NNNBNBNBNN", "BBBBBBBBBB", "NNMNNNNMNN", "NNNNETNNNN" }
     };
 
     int currentLevelIndex = 0;
-    int playerStartR = 0, playerStartC = 0; // To store where player spawns in current level
-
-    // Create board
+    int playerStartR = 0, playerStartC = 0;
     Board board(ROWS, COLS, TILE_SIZE);
 
-    // --- LEVEL LOADING FUNCTION ---
-    auto loadLevel = [&](int levelIdx) {
-        if(levelIdx >= allLevels.size()) return;
+    // Initial Level Load
+    loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
+              texEmpty, texBlocked, texMonster, texBoss, texExit);
 
-        const vector<string>& layout = allLevels[levelIdx];
-        
-        for (int r=0; r<ROWS; r++){
-            for (int c=0; c<COLS; c++){
-                char ch = layout[r][c];
-                // Default to empty if char not recognized
-                if (ch=='N') board.setTile(r,c,new EmptyTile(), texEmpty); 
-                else if (ch=='B') board.setTile(r,c,new BlockedTile(), texBlocked);
-                else if (ch=='M') board.setTile(r,c,new MonsterTile(), texMonster);
-                else if (ch=='T') board.setTile(r,c,new BossTile(), texBoss);
-                else if (ch=='E') board.setTile(r,c,new ExitTile(), texExit);
-                else if (ch=='P') { 
-                    board.setTile(r,c,new EmptyTile(), texEmpty); 
-                    playerStartR = r; 
-                    playerStartC = c; 
-                }
-                else {
-                    board.setTile(r,c,new EmptyTile(), texEmpty);
-                }
-            }
-        }
-        cout << "Loaded Level " << levelIdx + 1 << endl;
-    };
-
-    // Load the first level initially
-    loadLevel(currentLevelIndex);
-
-    unique_ptr<Player> player = nullptr;
+    // UPDATED: Using raw pointers
+    Player* player = nullptr;
     
     sf::Sprite playerSprite; 
     playerSprite.setTexture(texPlayer); 
     playerSprite.setScale(1.25f, 1.25f);
-
     int movePoints = 0;
-
     GameState state = GameState::MainMenu;
     string battleMessage;
-    unique_ptr<Enemy> currentEnemy = nullptr; 
-    unique_ptr<CombatSystem> combatSystem = nullptr;
+    
+    // UPDATED: Using raw pointers
+    Enemy* currentEnemy = nullptr; 
+    CombatSystem* combatSystem = nullptr;
+    
     int enemyRow = -1, enemyCol = -1;
 
-    // Button factory lambda
-    auto makeButton = [&](float x, float y, float w, float h, const string& txt, sf::Font& f, function<void()> cb) -> Button {
-        Button b;
-        b.rect = sf::RectangleShape(sf::Vector2f(w,h));
-        b.rect.setPosition(x,y);
-        b.rect.setFillColor(sf::Color(70,70,70));
-        b.rect.setOutlineThickness(1.f);
-        b.rect.setOutlineColor(sf::Color::Black);
-        if (fontOk) {
-            b.label.setFont(f);
-            b.label.setString(txt);
-            b.label.setCharacterSize(18);
-            b.label.setFillColor(sf::Color::White);
-            sf::FloatRect lb = b.label.getLocalBounds();
-            b.label.setPosition(x + (w - lb.width)/2 - lb.left, y + (h - lb.height)/2 - lb.top);
-        }
-        b.onClick = cb;
-        return b;
-    };
-
-    // Main menu UI
+    // --- UI SETUP ---
     sf::Text titleText("RogueEmblem", font, 48);
     titleText.setFillColor(sf::Color::White);
     titleText.setPosition(WINDOW_W/2 - titleText.getLocalBounds().width/2, 100);
@@ -172,141 +193,103 @@ int main() {
     subtitleText.setFillColor(sf::Color::White);
     subtitleText.setPosition(WINDOW_W/2 - subtitleText.getLocalBounds().width/2, 180);
 
+    // --- MAIN MENU BUTTONS ---
     vector<Button> menuButtons;
-    // Note: We use playerStartR/C determined by loadLevel(0)
-    menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, [&](){
-        player = make_unique<Soldier>(playerStartR, playerStartC);
+    
+    menuButtons.push_back(createButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, fontOk, [&](){
+        if(player) delete player; // Safety cleanup
+        player = new Soldier(playerStartR, playerStartC);
         state = GameState::Exploring;
         playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
-    menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 320, 200, 50, "Archer", font, [&](){
-        player = make_unique<Archer>(playerStartR, playerStartC);
+    
+    menuButtons.push_back(createButton(WINDOW_W/2 - 100, 320, 200, 50, "Archer", font, fontOk, [&](){
+        if(player) delete player;
+        player = new Archer(playerStartR, playerStartC);
         state = GameState::Exploring;
         playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
-    menuButtons.push_back(makeButton(WINDOW_W/2 - 100, 390, 200, 50, "Mage", font, [&](){
-        player = make_unique<Mage>(playerStartR, playerStartC);
+    
+    menuButtons.push_back(createButton(WINDOW_W/2 - 100, 390, 200, 50, "Mage", font, fontOk, [&](){
+        if(player) delete player;
+        player = new Mage(playerStartR, playerStartC);
         state = GameState::Exploring;
         playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
 
+    // --- BATTLE BUTTONS ---
     vector<Button> battleButtons;
     const float btnW = 160, btnH = 40;
     float battleBtnY = WINDOW_H - 70.f;
 
-    auto startBattle = [&](int r, int c, bool isBoss){
-        cout << "\n--- Battle start ---\n";
-        
-        if (isBoss) {
-             currentEnemy = make_unique<Boss>("Dungeon Lord", 3, 100, 15, 8);
-        } else {
-            // Slight difficulty increase per level for random monsters
-            int hpBonus = currentLevelIndex * 5;
-            int atkBonus = currentLevelIndex * 2;
-
-            if (D20().roll() > 15) {
-                 currentEnemy = make_unique<Boss>("Ogre", 1, 25 + hpBonus, 10 + atkBonus, 5);
-            } else {
-                 currentEnemy = make_unique<Monster>("Goblin", 18, 5 + hpBonus, 2 + atkBonus);
-            }
-        }
-        
-        combatSystem = make_unique<CombatSystem>(player.get(), currentEnemy.get(), cout);
-        enemyRow = r; enemyCol = c;
-        state = GameState::InBattle;
-        
-        player->resetDefend();
-        battleMessage = "Battle started! " + player->name + " vs " + currentEnemy->name;
-    };
-    
-    auto checkBattleEnd = [&](){
-        if (!currentEnemy || !combatSystem) return;
-        if (combatSystem->isEnemyDefeated()) {
-            cout << currentEnemy->name << " defeated! Player gains 5 HP.\n";
-            player->hp = min(player->hp + 5, player->maxHp);
-            
-            board.replaceWithEmpty(enemyRow, enemyCol, texEmpty);
-
-            currentEnemy = nullptr;
-            combatSystem = nullptr;
-            state = GameState::Exploring;
-        } else if (combatSystem->isPlayerDefeated()) {
-            cout << player->name << " died. Game Over.\n";
-            state = GameState::GameOver;
-            currentEnemy = nullptr;
-            combatSystem = nullptr;
-        }
-    };
-
-    // Battle buttons (Attack, Defend, Ability, Run)
-    battleButtons.push_back(makeButton(20, battleBtnY, btnW, btnH, "Attack", font, [&](){
+    battleButtons.push_back(createButton(20, battleBtnY, btnW, btnH, "Attack", font, fontOk, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         battleMessage = player->name + " attacks!\n";
         combatSystem->attack();
-        checkBattleEnd(); 
+        
+        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
+        
         if (state == GameState::InBattle) { 
             battleMessage += "Enemy attacks!\n";
             combatSystem->enemyTurn();
-            checkBattleEnd();
+            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
             if(state == GameState::InBattle) battleMessage += "Your turn.";
             else if (state == GameState::GameOver) battleMessage += "You were defeated!";
-        } else if (state == GameState::Exploring) {
-            battleMessage += "You won the battle!";
-        }
+        } else if (state == GameState::Exploring) battleMessage += "You won the battle!";
     }));
 
-    battleButtons.push_back(makeButton(210, battleBtnY, btnW, btnH, "Defend", font, [&](){
+    battleButtons.push_back(createButton(210, battleBtnY, btnW, btnH, "Defend", font, fontOk, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         battleMessage = player->name + " defends!\n";
         combatSystem->defend();
         battleMessage += "Enemy attacks!\n";
         combatSystem->enemyTurn();
-        checkBattleEnd();
+        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
         if(state == GameState::InBattle) battleMessage += "Your turn.";
         else if (state == GameState::GameOver) battleMessage += "You were defeated!";
     }));
 
-    battleButtons.push_back(makeButton(400, battleBtnY, btnW, btnH, "Ability", font, [&](){
+    battleButtons.push_back(createButton(400, battleBtnY, btnW, btnH, "Ability", font, fontOk, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         battleMessage = player->name + " uses ability!\n";
         combatSystem->ability();
-        checkBattleEnd();
+        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
         if (state == GameState::InBattle) { 
             battleMessage += "Enemy attacks!\n";
             combatSystem->enemyTurn();
-            checkBattleEnd();
+            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
             if(state == GameState::InBattle) battleMessage += "Your turn.";
             else if (state == GameState::GameOver) battleMessage += "You were defeated!";
-        } else if (state == GameState::Exploring) {
-            battleMessage += "You won the battle!";
-        }
+        } else if (state == GameState::Exploring) battleMessage += "You won the battle!";
     }));
 
-    battleButtons.push_back(makeButton(590, battleBtnY, btnW, btnH, "Run", font, [&](){
+    battleButtons.push_back(createButton(590, battleBtnY, btnW, btnH, "Run", font, fontOk, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         if (combatSystem->run()) {
             Tile* t = board.getTile(player->posR, player->posC);
             if (MonsterTile* mt = dynamic_cast<MonsterTile*>(t)) { mt->resetCombatTrigger(); }
             if (BossTile* bt = dynamic_cast<BossTile*>(t)) { bt->resetCombatTrigger(); }
-
-            currentEnemy = nullptr;
-            combatSystem = nullptr;
+            
+            // MANUAL DELETE
+            delete currentEnemy; currentEnemy = nullptr;
+            delete combatSystem; combatSystem = nullptr;
+            
             state = GameState::Exploring;
             battleMessage = "You fled!";
         } else {
-            battleMessage = "Run failed!\n";
-            battleMessage += "Enemy attacks!\n";
+            battleMessage = "Run failed!\nEnemy attacks!\n";
             combatSystem->enemyTurn();
-            checkBattleEnd();
+            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state);
             if(state == GameState::InBattle) battleMessage += "Your turn.";
             else if (state == GameState::GameOver) battleMessage += "You were defeated!";
         }
     }));
 
-    // Battle screen UI elements
+    // --- BATTLE UI BARS ---
     sf::RectangleShape playerBox(sf::Vector2f(250, 300));
     playerBox.setTexture(&texPortraitPlayer);               
     playerBox.setPosition(100, 200);
+    
     sf::RectangleShape battleBgRect(sf::Vector2f(WINDOW_W, WINDOW_H));
     battleBgRect.setTexture(&texBattleBg);
 
@@ -316,33 +299,19 @@ int main() {
 
     sf::Text playerBattleName, enemyBattleName, battleLogText;
     if(fontOk) {
-        playerBattleName.setFont(font);
-        playerBattleName.setCharacterSize(24);
-        playerBattleName.setFillColor(sf::Color::White);
-
-        enemyBattleName.setFont(font);
-        enemyBattleName.setCharacterSize(24);
-        enemyBattleName.setFillColor(sf::Color::White);
-
-        battleLogText.setFont(font);
-        battleLogText.setCharacterSize(20);
-        battleLogText.setFillColor(sf::Color::White);
+        playerBattleName.setFont(font); playerBattleName.setCharacterSize(24); playerBattleName.setFillColor(sf::Color::White);
+        enemyBattleName.setFont(font); enemyBattleName.setCharacterSize(24); enemyBattleName.setFillColor(sf::Color::White);
+        battleLogText.setFont(font); battleLogText.setCharacterSize(20); battleLogText.setFillColor(sf::Color::White);
         battleLogText.setPosition(50, WINDOW_H - 150);
     }
 
-    const float BAR_WIDTH = 200;
-    const float BAR_HEIGHT = 25;
-    sf::RectangleShape playerHpBarBack(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT));
-    playerHpBarBack.setFillColor(sf::Color(50, 50, 50));
-    sf::RectangleShape playerHpBarFront(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT));
-    playerHpBarFront.setFillColor(sf::Color::Green);
-    
-    sf::RectangleShape enemyHpBarBack(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT));
-    enemyHpBarBack.setFillColor(sf::Color(50, 50, 50));
-    sf::RectangleShape enemyHpBarFront(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT));
-    enemyHpBarFront.setFillColor(sf::Color::Red);
+    const float BAR_WIDTH = 200, BAR_HEIGHT = 25;
+    sf::RectangleShape playerHpBarBack(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT)); playerHpBarBack.setFillColor(sf::Color(50, 50, 50));
+    sf::RectangleShape playerHpBarFront(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT)); playerHpBarFront.setFillColor(sf::Color::Green);
+    sf::RectangleShape enemyHpBarBack(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT)); enemyHpBarBack.setFillColor(sf::Color(50, 50, 50));
+    sf::RectangleShape enemyHpBarFront(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT)); enemyHpBarFront.setFillColor(sf::Color::Red);
 
-    // Main loop
+    // --- GAME LOOP ---
     while (window.isOpen()) {
         sf::Event ev;
         while (window.pollEvent(ev)) {
@@ -352,23 +321,15 @@ int main() {
                 if (ev.type == sf::Event::MouseButtonPressed && ev.mouseButton.button == sf::Mouse::Left) {
                     sf::Vector2f mp(ev.mouseButton.x, ev.mouseButton.y);
                     for (auto &b : menuButtons) {
-                        if (b.contains(mp)) {
-                            b.onClick();
-                            // Player created in onClick
-                            break;
-                        }
+                        if (b.contains(mp)) { b.onClick(); break; }
                     }
                 }
             }
             else if (state == GameState::Exploring) {
-                if (!player) {
-                    state = GameState::MainMenu;
-                    continue;
-                }
+                if (!player) { state = GameState::MainMenu; continue; }
 
                 if (ev.type == sf::Event::KeyPressed && ev.key.code == sf::Keyboard::Space) {
-                    D6 moveDice;
-                    movePoints = moveDice.roll();
+                    D6 moveDice; movePoints = moveDice.roll();
                     cout << "[Movement] Rolled d6 = " << movePoints << " move points\n";
                 }
                 
@@ -382,42 +343,33 @@ int main() {
                     if (dr!=0 || dc!=0) {
                         int nr = player->posR + dr;
                         int nc = player->posC + dc;
-                        
                         Tile* t = board.getTile(nr,nc);
                         
-                        if (!t) { cout << "Cannot move out of bounds" << endl; }
-                        else if (t->isBlocked()) { cout << "Blocked tile" << endl; }
+                        if (!t) cout << "Cannot move out of bounds" << endl;
+                        else if (t->isBlocked()) cout << "Blocked tile" << endl;
                         else {
                             player->posR = nr; player->posC = nc;
                             playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
                             movePoints--;
-                            
-                            t->onEnter(player.get());
+                            t->onEnter(player); // Passing raw pointer
                             
                             if (t->isMonster() && dynamic_cast<MonsterTile*>(t)->shouldTriggerCombat()) {
-                                startBattle(nr, nc, false);
-                            } else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
-                                startBattle(nr, nc, true);
-                            } else if (t->isExit()) {
-                                // --- LEVEL TRANSITION LOGIC ---
+                                startBattle(nr, nc, false, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
+                            }
+                            else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
+                                startBattle(nr, nc, true, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
+                            }
+                            else if (t->isExit()) {
                                 if (currentLevelIndex < allLevels.size() - 1) {
-                                    // Go to next level
-                                    cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding to Level " << currentLevelIndex + 2 << "...\n";
+                                    cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding...\n";
                                     currentLevelIndex++;
-                                    
-                                    // Load new map
-                                    loadLevel(currentLevelIndex);
-                                    
-                                    // Update player coordinates to the new 'P' location found in loadLevel
-                                    player->posR = playerStartR;
-                                    player->posC = playerStartC;
+                                    loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
+                                              texEmpty, texBlocked, texMonster, texBoss, texExit);
+                                    player->posR = playerStartR; player->posC = playerStartC;
                                     playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
-                                    
-                                    // Optional: Reset move points or give a bonus
                                     movePoints = 0; 
                                 } else {
-                                    // Last level cleared
-                                    cout << "You reached the exit - Victory!\n";
+                                    cout << "Victory!\n";
                                     state = GameState::Victory;
                                 }
                             }
@@ -429,10 +381,7 @@ int main() {
                 if (ev.type == sf::Event::MouseButtonPressed && ev.mouseButton.button == sf::Mouse::Left) {
                     sf::Vector2f mp(ev.mouseButton.x, ev.mouseButton.y);
                     for (auto &b : battleButtons) {
-                        if (b.contains(mp)) {
-                            b.onClick();
-                            break;
-                        }
+                        if (b.contains(mp)) { b.onClick(); break; }
                     }
                 }
             }
@@ -451,19 +400,15 @@ int main() {
         else if (state == GameState::Exploring) {
             board.draw(window);
             window.draw(playerSprite);
-
             if (fontOk && player) {
                 string s = "Lvl " + to_string(currentLevelIndex+1) + " | Move: WASD | SPACE(roll): " + to_string(movePoints) + 
                            " | " + player->name + " HP: " + to_string(player->hp) + "/" + to_string(player->maxHp);
-                sf::Text t(s, font, 16); 
-                t.setFillColor(sf::Color::White); 
-                t.setPosition(10, ROWS*TILE_SIZE + 10);
+                sf::Text t(s, font, 16); t.setFillColor(sf::Color::White); t.setPosition(10, ROWS*TILE_SIZE + 10);
                 window.draw(t);
             }
         }
         else if (state == GameState::InBattle) {
             window.draw(battleBgRect);
-
             if (fontOk && player && currentEnemy) {
                 window.draw(playerBox);
                 playerBattleName.setString(player->name);
@@ -475,26 +420,21 @@ int main() {
                 enemyBattleName.setPosition(enemyBox.getPosition().x + 20, enemyBox.getPosition().y - 70);
                 window.draw(enemyBattleName);
 
-                float playerHpPercent = static_cast<float>(player->hp) / player->maxHp;
-                if (playerHpPercent < 0) playerHpPercent = 0;
+                float playerHpPercent = max(0.f, static_cast<float>(player->hp) / player->maxHp);
                 playerHpBarBack.setPosition(playerBattleName.getPosition().x, playerBattleName.getPosition().y + 40);
                 playerHpBarFront.setPosition(playerBattleName.getPosition().x, playerBattleName.getPosition().y + 40);
                 playerHpBarFront.setSize(sf::Vector2f(BAR_WIDTH * playerHpPercent, BAR_HEIGHT));
-                window.draw(playerHpBarBack);
-                window.draw(playerHpBarFront);
+                window.draw(playerHpBarBack); window.draw(playerHpBarFront);
 
-                float enemyHpPercent = static_cast<float>(currentEnemy->hp) / currentEnemy->maxHp;
-                if (enemyHpPercent < 0) enemyHpPercent = 0;
+                float enemyHpPercent = max(0.f, static_cast<float>(currentEnemy->hp) / currentEnemy->maxHp);
                 enemyHpBarBack.setPosition(enemyBattleName.getPosition().x, enemyBattleName.getPosition().y + 40);
                 enemyHpBarFront.setPosition(enemyBattleName.getPosition().x, enemyBattleName.getPosition().y + 40);
                 enemyHpBarFront.setSize(sf::Vector2f(BAR_WIDTH * enemyHpPercent, BAR_HEIGHT));
-                window.draw(enemyHpBarBack);
-                window.draw(enemyHpBarFront);
+                window.draw(enemyHpBarBack); window.draw(enemyHpBarFront);
 
                 battleLogText.setString(battleMessage);
                 window.draw(battleLogText);
             }
-
             for (auto &b : battleButtons) {
                 window.draw(b.rect);
                 if (fontOk) window.draw(b.label);
@@ -506,8 +446,7 @@ int main() {
             overlay.setFillColor(sf::Color(0,0,0,180));
             window.draw(overlay);
             if (fontOk) {
-                sf::Text go("GAME OVER", font, 48); 
-                go.setFillColor(sf::Color::Red);
+                sf::Text go("GAME OVER", font, 48); go.setFillColor(sf::Color::Red);
                 sf::FloatRect goRect = go.getLocalBounds();
                 go.setPosition(WINDOW_W/2 - goRect.width/2 - goRect.left, WINDOW_H/2 - goRect.height/2 - goRect.top);
                 window.draw(go);
@@ -518,8 +457,7 @@ int main() {
             overlay.setFillColor(sf::Color(0,255,0,200));
             window.draw(overlay);
             if (fontOk) {
-                sf::Text txt("ALL LEVELS CLEARED!\n      VICTORY", font, 48); 
-                txt.setFillColor(sf::Color::Black);
+                sf::Text txt("ALL LEVELS CLEARED!\n      VICTORY", font, 48); txt.setFillColor(sf::Color::Black);
                 sf::FloatRect txtRect = txt.getLocalBounds();
                 txt.setPosition(WINDOW_W/2 - txtRect.width/2 - txtRect.left, WINDOW_H/2 - txtRect.height/2 - txtRect.top);
                 window.draw(txt);
@@ -527,5 +465,11 @@ int main() {
         }
         window.display();
     }
+    
+    // Final cleanup
+    if (player) delete player;
+    if (currentEnemy) delete currentEnemy;
+    if (combatSystem) delete combatSystem;
+    
     return 0;
 }
