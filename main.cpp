@@ -139,7 +139,7 @@ int main() {
     const int WINDOW_H = int(ROWS * TILE_SIZE + 100); 
 
     sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "RogueEmblem - OOP Project");
-    window.setFramerateLimit(60);
+    window.setFramerateLimit(120);
 
     // --- ASSET LOADING ---
     sf::Texture texEmpty, texBlocked, texMonster, texBoss, texExit, texPlayer;
@@ -153,6 +153,8 @@ int main() {
     if (!texSoldier.loadFromFile("assets/soldier.jpg")) cerr << "Warn: missing assets/soldier.jpg\n";
     if (!texArcher.loadFromFile("assets/Archer.png"))   cerr << "Warn: missing assets/archer.jpg\n";
     if (!texMage.loadFromFile("assets/Mage.jpeg"))       cerr << "Warn: missing assets/mage.jpg\n";
+    sf::Texture texMenuBg;
+    if (!texMenuBg.loadFromFile("assets/menu_bg.jpg")) cerr << "Warn: missing assets/menu_bg.jpg\n";
     sf::Texture texBattleBg, texPortraitPlayer, texPortraitEnemy;
     if (!texBattleBg.loadFromFile("assets/battle_bg.jpg"))           cerr << "Warn: missing assets/battle_bg.png\n";
     if (!texPortraitPlayer.loadFromFile("assets/portrait_player.jpg")) cerr << "Warn: missing assets/portrait_player.png\n";
@@ -175,7 +177,12 @@ int main() {
     int currentLevelIndex = 0;
     int playerStartR = 0, playerStartC = 0;
     Board board(ROWS, COLS, TILE_SIZE);
-
+    sf::Sprite menuBgSprite;
+    menuBgSprite.setTexture(texMenuBg);
+    // Scale it to fit window exactly
+    float bgScaleX = (float)WINDOW_W / texMenuBg.getSize().x;
+    float bgScaleY = (float)WINDOW_H / texMenuBg.getSize().y;
+    menuBgSprite.setScale(bgScaleX, bgScaleY);
     // Initial Level Load
     loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
               texEmpty, texBlocked, texMonster, texBoss, texExit);
@@ -210,7 +217,7 @@ int main() {
     vector<Button> menuButtons;
     sf::RectangleShape playerBox(sf::Vector2f(250, 300));
     playerBox.setTexture(&texPortraitPlayer);               
-    playerBox.setPosition(100, 200);
+    playerBox.setPosition(100,350);
     
     menuButtons.push_back(createButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, fontOk, [&](){
         if(player) delete player; // Safety cleanup
@@ -311,7 +318,7 @@ int main() {
 
     sf::RectangleShape enemyBox(sf::Vector2f(250, 300));
     enemyBox.setTexture(&texPortraitEnemy);     
-    enemyBox.setPosition(WINDOW_W - 350, 150);
+    enemyBox.setPosition(WINDOW_W - 350, 350);
 
     sf::Text playerBattleName, enemyBattleName, battleLogText;
     if(fontOk) {
@@ -320,7 +327,7 @@ int main() {
         battleLogText.setFont(font); battleLogText.setCharacterSize(20); battleLogText.setFillColor(sf::Color::White);
         battleLogText.setPosition(50, WINDOW_H - 150);
     }
-
+    
     const float BAR_WIDTH = 200, BAR_HEIGHT = 25;
     sf::RectangleShape playerHpBarBack(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT)); playerHpBarBack.setFillColor(sf::Color(50, 50, 50));
     sf::RectangleShape playerHpBarFront(sf::Vector2f(BAR_WIDTH, BAR_HEIGHT)); playerHpBarFront.setFillColor(sf::Color::Green);
@@ -353,7 +360,6 @@ int main() {
                     cout << "[Movement] Rolled d6 = " << movePoints << " move points\n";
                     }
                 }
-                
                 if (ev.type == sf::Event::KeyPressed && movePoints > 0) {
                     int dr=0, dc=0;
                     if (ev.key.code == sf::Keyboard::W) dr = -1;
@@ -390,7 +396,6 @@ int main() {
                                 else if (currentLevelIndex < allLevels.size() - 1) {
                                     cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding...\n";
                                     currentLevelIndex++;
-                                    
                                     // RESET BOSS FLAG FOR NEW LEVEL
                                     levelBossDefeated = false; 
 
@@ -421,6 +426,7 @@ int main() {
         window.clear(sf::Color(25,25,25));
 
         if (state == GameState::MainMenu) {
+            window.draw(menuBgSprite);
             window.draw(titleText);
             window.draw(subtitleText);
             for(auto &b : menuButtons) {
