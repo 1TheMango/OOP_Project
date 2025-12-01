@@ -78,7 +78,7 @@ void startBattle(int r, int c, bool isBoss, int levelIndex,
     if (isBoss) {
         int hpBonus = levelIndex * 3;
         int atkBonus = levelIndex * 2;
-        curEnemy = new Boss("Dungeon Lord", 3, 45 + hpBonus,6+ atkBonus , 8);
+        curEnemy = new Boss("Dungeon Lord", 3, 30+ hpBonus,6+ atkBonus , 8);
     } else {
         int hpBonus = levelIndex * 5;
         int atkBonus = levelIndex * 2;
@@ -146,7 +146,7 @@ int main() {
     if (!texEmpty.loadFromFile("assets/normal.png"))    cerr << "Warn: missing assets/normal.png\n";
     if (!texBlocked.loadFromFile("assets/blocked.png")) cerr << "Warn: missing assets/blocked.png\n";
     if (!texMonster.loadFromFile("assets/monster.png")) cerr << "Warn: missing assets/monster.png\n";
-    if (!texBoss.loadFromFile("assets/boss.png"))       cerr << "Warn: missing assets/boss.png\n";
+    if (!texBoss.loadFromFile("assets/Boss.jpg"))       cerr << "Warn: missing assets/boss.png\n";
     if (!texExit.loadFromFile("assets/exit.png"))       cerr << "Warn: missing assets/exit.png\n";
     if (!texPlayer.loadFromFile("assets/player2.jpg"))  cerr << "Warn: missing assets/player.png\n";
     
@@ -281,7 +281,6 @@ int main() {
             if (MonsterTile* mt = dynamic_cast<MonsterTile*>(t)) { mt->resetCombatTrigger(); }
             if (BossTile* bt = dynamic_cast<BossTile*>(t)) { bt->resetCombatTrigger(); }
             
-            // MANUAL DELETE
             delete currentEnemy; currentEnemy = nullptr;
             delete combatSystem; combatSystem = nullptr;
             
