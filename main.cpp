@@ -149,7 +149,10 @@ int main() {
     if (!texBoss.loadFromFile("assets/Boss.jpg"))       cerr << "Warn: missing assets/boss.png\n";
     if (!texExit.loadFromFile("assets/exit.png"))       cerr << "Warn: missing assets/exit.png\n";
     if (!texPlayer.loadFromFile("assets/player2.jpg"))  cerr << "Warn: missing assets/player.png\n";
-    
+    sf::Texture texSoldier, texArcher, texMage;
+    if (!texSoldier.loadFromFile("assets/soldier.jpg")) cerr << "Warn: missing assets/soldier.jpg\n";
+    if (!texArcher.loadFromFile("assets/Archer.png"))   cerr << "Warn: missing assets/archer.jpg\n";
+    if (!texMage.loadFromFile("assets/Mage.jpeg"))       cerr << "Warn: missing assets/mage.jpg\n";
     sf::Texture texBattleBg, texPortraitPlayer, texPortraitEnemy;
     if (!texBattleBg.loadFromFile("assets/battle_bg.jpg"))           cerr << "Warn: missing assets/battle_bg.png\n";
     if (!texPortraitPlayer.loadFromFile("assets/portrait_player.jpg")) cerr << "Warn: missing assets/portrait_player.png\n";
@@ -205,6 +208,9 @@ int main() {
 
     // --- MAIN MENU BUTTONS ---
     vector<Button> menuButtons;
+    sf::RectangleShape playerBox(sf::Vector2f(250, 300));
+    playerBox.setTexture(&texPortraitPlayer);               
+    playerBox.setPosition(100, 200);
     
     menuButtons.push_back(createButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, fontOk, [&](){
         if(player) delete player; // Safety cleanup
@@ -217,6 +223,7 @@ int main() {
         if(player) delete player;
         player = new Archer(playerStartR, playerStartC);
         state = GameState::Exploring;
+        playerBox.setTexture(&texArcher);
         playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
     
@@ -224,6 +231,7 @@ int main() {
         if(player) delete player;
         player = new Mage(playerStartR, playerStartC);
         state = GameState::Exploring;
+        playerBox.setTexture(&texMage); 
         playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
     }));
 
@@ -296,9 +304,7 @@ int main() {
     }));
 
     // --- BATTLE UI BARS ---
-    sf::RectangleShape playerBox(sf::Vector2f(250, 300));
-    playerBox.setTexture(&texPortraitPlayer);               
-    playerBox.setPosition(100, 200);
+    
     
     sf::RectangleShape battleBgRect(sf::Vector2f(WINDOW_W, WINDOW_H));
     battleBgRect.setTexture(&texBattleBg);
