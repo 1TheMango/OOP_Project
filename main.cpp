@@ -200,6 +200,10 @@ int main() {
     bool levelBossDefeated = false;     // Does exit open?
     bool isFightingLevelBoss = false;   // Is current fight against level boss?
 
+    // TIMING FLAGS FOR ENEMY TURN
+    sf::Clock turnClock;
+    bool enemyTurnPending = false;
+
     Enemy* currentEnemy = nullptr; 
     CombatSystem* combatSystem = nullptr;
     
@@ -247,50 +251,59 @@ int main() {
     const float btnW = 160, btnH = 40;
     float battleBtnY = WINDOW_H - 70.f;
 
-    // UPDATE: Passed isFightingLevelBoss to checkBattleEnd calls
+    // NOTE: Buttons now check '!enemyTurnPending' to prevent spam clicking while waiting
     battleButtons.push_back(createButton(20, battleBtnY, btnW, btnH, "Attack", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem) return;
+        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        
         battleMessage = player->name + " attacks!\n";
         combatSystem->attack();
         
         checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
         
+        // If battle continues, start waiting for enemy
         if (state == GameState::InBattle) { 
-            battleMessage += "Enemy attacks!\n";
-            combatSystem->enemyTurn();
-            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
-            if(state == GameState::InBattle) battleMessage += "Your turn.";
-            else if (state == GameState::GameOver) battleMessage += "You were defeated!";
-        } else if (state == GameState::Exploring) battleMessage += "You won the battle!";
+            enemyTurnPending = true;
+            turnClock.restart();
+            battleMessage += "Enemy is preparing to attack...";
+        } else if (state == GameState::Exploring) {
+            battleMessage += "You won the battle!";
+        }
     }));
 
     battleButtons.push_back(createButton(210, battleBtnY, btnW, btnH, "Defend", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem) return;
+        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        
         battleMessage = player->name + " defends!\n";
         combatSystem->defend();
-        battleMessage += "Enemy attacks!\n";
-        combatSystem->enemyTurn();
-        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
-        if(state == GameState::InBattle) battleMessage += "Your turn.";
-        else if (state == GameState::GameOver) battleMessage += "You were defeated!";
+        
+        // Defend doesn't end battle usually, so go straight to waiting
+        if (state == GameState::InBattle) {
+            enemyTurnPending = true;
+            turnClock.restart();
+            battleMessage += "Enemy is preparing to attack...";
+        }
     }));
 
     battleButtons.push_back(createButton(400, battleBtnY, btnW, btnH, "Ability", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem) return;
+        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        
         battleMessage = player->name + " uses ability!\n";
         combatSystem->ability();
+        
         checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
+        
         if (state == GameState::InBattle) { 
-            battleMessage += "Enemy attacks!\n";
-            combatSystem->enemyTurn();
-            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
-            if(state == GameState::InBattle) battleMessage += "Your turn.";
-            else if (state == GameState::GameOver) battleMessage += "You were defeated!";
-        } else if (state == GameState::Exploring) battleMessage += "You won the battle!";
+            enemyTurnPending = true;
+            turnClock.restart();
+            battleMessage += "Enemy is preparing to attack...";
+        } else if (state == GameState::Exploring) {
+            battleMessage += "You won the battle!";
+        }
     }));
 
     battleButtons.push_back(createButton(590, battleBtnY, btnW, btnH, "Run", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem) return;
+        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        
         if (combatSystem->run()) {
             Tile* t = board.getTile(player->posR, player->posC);
             if (MonsterTile* mt = dynamic_cast<MonsterTile*>(t)) { mt->resetCombatTrigger(); }
@@ -301,18 +314,17 @@ int main() {
             
             state = GameState::Exploring;
             battleMessage = "You fled!";
+            enemyTurnPending = false; // Reset just in case
         } else {
-            battleMessage = "Run failed!\nEnemy attacks!\n";
-            combatSystem->enemyTurn();
-            checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
-            if(state == GameState::InBattle) battleMessage += "Your turn.";
-            else if (state == GameState::GameOver) battleMessage += "You were defeated!";
+            battleMessage = "Run failed! ";
+            // Run failed, so enemy gets a turn. Wait for it.
+            enemyTurnPending = true;
+            turnClock.restart();
+            battleMessage += "Enemy is preparing to attack...";
         }
     }));
 
     // --- BATTLE UI BARS ---
-    
-    
     sf::RectangleShape battleBgRect(sf::Vector2f(WINDOW_W, WINDOW_H));
     battleBgRect.setTexture(&texBattleBg);
 
@@ -325,7 +337,7 @@ int main() {
         playerBattleName.setFont(font); playerBattleName.setCharacterSize(24); playerBattleName.setFillColor(sf::Color::White);
         enemyBattleName.setFont(font); enemyBattleName.setCharacterSize(24); enemyBattleName.setFillColor(sf::Color::White);
         battleLogText.setFont(font); battleLogText.setCharacterSize(20); battleLogText.setFillColor(sf::Color::White);
-        battleLogText.setPosition(50, WINDOW_H - 150);
+        battleLogText.setPosition(50, WINDOW_H - 200);
     }
     
     const float BAR_WIDTH = 200, BAR_HEIGHT = 25;
@@ -383,24 +395,23 @@ int main() {
                             if (t->isMonster() && dynamic_cast<MonsterTile*>(t)->shouldTriggerCombat()) {
                                 isFightingLevelBoss = false; // Normal monster
                                 startBattle(nr, nc, false, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
+                                enemyTurnPending = false; // Reset battle state
                             }
                             else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
                                 isFightingLevelBoss = true; // This is the level boss
                                 startBattle(nr, nc, true, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
+                                enemyTurnPending = false; // Reset battle state
                             }
                             else if (t->isExit()) {
-                                // UPDATE: Check if boss is defeated before allowing exit
                                 if (!levelBossDefeated) {
                                     cout << "[LOCKED] The exit is locked! You must defeat the Boss ('T') first.\n";
                                 }
                                 else if (currentLevelIndex < allLevels.size() - 1) {
                                     cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding...\n";
                                     currentLevelIndex++;
-                                    // RESET BOSS FLAG FOR NEW LEVEL
                                     levelBossDefeated = false; 
-
                                     loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
-                                                texEmpty, texBlocked, texMonster, texBoss, texExit);
+                                              texEmpty, texBlocked, texMonster, texBoss, texExit);
                                     player->posR = playerStartR; player->posC = playerStartC;
                                     playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
                                     movePoints = 0; 
@@ -419,6 +430,26 @@ int main() {
                     for (auto &b : battleButtons) {
                         if (b.contains(mp)) { b.onClick(); break; }
                     }
+                }
+            }
+        }
+
+        // --- BATTLE DELAY LOGIC ---
+        // We check this every frame to see if the timer has expired
+        if (state == GameState::InBattle && enemyTurnPending) {
+            if (turnClock.getElapsedTime().asSeconds() >= 2.0f) {
+                // Execute Enemy Turn
+                battleMessage += "\nEnemy attacks!\n";
+                combatSystem->enemyTurn();
+                
+                checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
+                
+                enemyTurnPending = false; // Player can act again
+                
+                if (state == GameState::InBattle) {
+                    battleMessage += "Your turn.";
+                } else if (state == GameState::GameOver) {
+                    battleMessage += "You were defeated!";
                 }
             }
         }
@@ -478,6 +509,12 @@ int main() {
                 window.draw(battleLogText);
             }
             for (auto &b : battleButtons) {
+                if (enemyTurnPending) {
+                    b.rect.setOutlineColor(sf::Color::Red);
+                } else {
+                    b.rect.setOutlineColor(sf::Color::Black);
+                }
+                
                 window.draw(b.rect);
                 if (fontOk) window.draw(b.label);
             }
