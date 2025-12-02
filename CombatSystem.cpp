@@ -1,4 +1,4 @@
-#include "CombatSystem.h"
+#include "include/CombatSystem.h"
 
 CombatSystem::CombatSystem(Player* p, Enemy* e, std::ostream& l) 
 	: player(p), enemy(e), log(l) {}

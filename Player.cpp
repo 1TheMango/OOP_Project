@@ -1,5 +1,5 @@
-#include "Player.h"
-#include "Dice.h"
+#include "include/Player.h"
+#include "include/Dice.h"
 
 Player::Player(std::string n, int m, int a, int d, int r, int c)
     : Entity(n, m, a, d), posR(r), posC(c) {}

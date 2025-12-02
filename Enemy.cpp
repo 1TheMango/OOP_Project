@@ -1,4 +1,4 @@
-#include "Enemy.h"
+#include "include/Enemy.h"
 
 Enemy::Enemy(std::string n, int m, int a, int d) 
 	: Entity(n, m, a, d) {}

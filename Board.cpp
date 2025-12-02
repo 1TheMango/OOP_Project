@@ -1,4 +1,4 @@
-#include "Board.h"
+#include "include/Board.h"
 
 Board::Board(int r, int c, float size) : rows(r), cols(c), tileSize(size) {
 	grid.resize(rows, std::vector<Tile*>(cols, nullptr));

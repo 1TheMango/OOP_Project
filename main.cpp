@@ -5,14 +5,14 @@
 #include <functional>
 #include <algorithm> // For min/max
 
-#include "Dice.h"
-#include "Player.h"
-#include "Enemy.h"
-#include "CombatSystem.h"
-#include "Board.h"
-#include "Tile.h"
-#include "GameState.h"
-#include "UIButton.h"
+#include "include/Dice.h"
+#include "include/Player.h"
+#include "include/Enemy.h"
+#include "include/CombatSystem.h"
+#include "include/Board.h"
+#include "include/Tile.h"
+#include "include/GameState.h"
+#include "include/UIButton.h"
 
 using namespace std;
 

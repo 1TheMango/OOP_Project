@@ -1,4 +1,4 @@
-#include "Dice.h"
+#include "include/Dice.h"
 
 std::mt19937 rng((unsigned)std::chrono::high_resolution_clock::now().time_since_epoch().count());
 

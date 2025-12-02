@@ -1,4 +1,4 @@
-#include "Entity.h"
+#include "include/Entity.h"
 
 Entity::Entity(std::string n, int m, int a, int d) 
 	: name(n), hp(m), maxHp(m), attack(a), defense(d) {}
