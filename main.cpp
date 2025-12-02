@@ -150,7 +150,7 @@ int main() {
     if (!texExit.loadFromFile("assets/exit.png"))       cerr << "Warn: missing assets/exit.png\n";
     if (!texPlayer.loadFromFile("assets/player2.jpg"))  cerr << "Warn: missing assets/player.png\n";
     sf::Texture texSoldier, texArcher, texMage;
-    if (!texSoldier.loadFromFile("assets/soldier.jpg")) cerr << "Warn: missing assets/soldier.jpg\n";
+    // if (!texSoldier.loadFromFile("assets/soldier.jpg")) cerr << "Warn: missing assets/soldier.jpg\n";
     if (!texArcher.loadFromFile("assets/Archer.png"))   cerr << "Warn: missing assets/archer.jpg\n";
     if (!texMage.loadFromFile("assets/Mage.jpeg"))       cerr << "Warn: missing assets/mage.jpg\n";
     sf::Texture texMenuBg;
