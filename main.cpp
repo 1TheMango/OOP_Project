@@ -4,6 +4,7 @@
 #include <string>
 #include <functional>
 #include <algorithm> // For min/max
+#include <sstream>  
 
 #include "include/Dice.h"
 #include "include/Player.h"
@@ -68,10 +69,13 @@ void loadLevel(int levelIdx, const vector<vector<string>>& allLevels, Board& boa
 void startBattle(int r, int c, bool isBoss, int levelIndex, 
                  Player* player, Enemy*& curEnemy, 
                  CombatSystem*& combatSys, 
-                 int& enemyR, int& enemyC, GameState& state, string& msg)
+                 int& enemyR, int& enemyC, GameState& state, string& msg,
+                 stringstream& ss)
 {
-    cout << "\n--- Battle start ---\n";
-    // Clean up previous enemy if any (safety check)
+    ss.str(""); 
+    ss.clear();
+    ss << "--- Battle start ---\n";
+
     if (curEnemy) { delete curEnemy; curEnemy = nullptr; }
     if (combatSys) { delete combatSys; combatSys = nullptr; }
 
@@ -82,53 +86,54 @@ void startBattle(int r, int c, bool isBoss, int levelIndex,
     } else {
         int hpBonus = levelIndex * 5;
         int atkBonus = levelIndex * 2;
-        // UPDATED: Ogre is now a Monster class, not Boss class
         if (D20().roll() > 15) curEnemy = new Monster("Ogre", 1, 35 + hpBonus, 6 + atkBonus);
         else curEnemy = new Monster("Goblin", 18, 5 + hpBonus, 2 + atkBonus);
     }
     
-    combatSys = new CombatSystem(player, curEnemy, cout);
+    combatSys = new CombatSystem(player, curEnemy, ss);
+    
     enemyR = r; 
     enemyC = c;
     state = GameState::InBattle;
     
     player->resetDefend();
-    msg = "Battle started! " + player->name + " vs " + curEnemy->name;
+    
+    ss << player->name << " vs " << curEnemy->name;
+    msg = ss.str(); 
 }
 
-// --- HELPER FUNCTION: CHECK BATTLE END ---
-// UPDATED: Now uses 'isLevelBossBattle' to determine if exit should open
-void checkBattleEnd(Player* player, Enemy*& curEnemy, 
-                    CombatSystem*& combatSys, 
-                    Board& board, int enemyR, int enemyC, 
-                    sf::Texture& tEmpty, GameState& state, 
-                    bool& bossDefeated, bool isLevelBossBattle)
+// --- HELPER FUNCTION: CHECK BATTLE STATUS ---
+// MODIFIED: This function NO LONGER deletes the enemy or changes state immediately.
+// It simply detects if the battle ended, updates the log, and sets the 'battleOver' flag.
+void checkBattleStatus(Player* player, Enemy* curEnemy, 
+                    CombatSystem* combatSys, 
+                    bool& bossDefeated, bool isLevelBossBattle,
+                    stringstream& ss,
+                    bool& battleOver, sf::Clock& battleDelayClock)
 {
     if (!curEnemy || !combatSys) return;
 
     if (combatSys->isEnemyDefeated()) {
-        cout << curEnemy->name << " defeated! Player gains 5 HP.\n";
+        ss << "\n" << curEnemy->name << " defeated! +5 HP.";
         player->hp = min(player->hp + 5, player->maxHp);
 
         if (isLevelBossBattle) {
             bossDefeated = true;
+            ss << "\n>>> BOSS DEFEATED! Exit UNLOCKED! <<<";
             cout << ">>> DUNGEON BOSS DEFEATED! The Exit is now UNLOCKED! <<<\n";
         }
-
-        board.replaceWithEmpty(enemyR, enemyC, tEmpty);
-
-        // MANUAL DELETE
-        delete curEnemy; curEnemy = nullptr;
-        delete combatSys; combatSys = nullptr;
         
-        state = GameState::Exploring;
+        // Trigger the end sequence
+        battleOver = true;
+        battleDelayClock.restart();
+
     } else if (combatSys->isPlayerDefeated()) {
+        ss << "\n" << player->name << " died.";
         cout << player->name << " died. Game Over.\n";
-        state = GameState::GameOver;
         
-        // MANUAL DELETE
-        delete curEnemy; curEnemy = nullptr;
-        delete combatSys; combatSys = nullptr;
+        // Trigger the end sequence
+        battleOver = true;
+        battleDelayClock.restart();
     }
 }
 
@@ -150,7 +155,7 @@ int main() {
     if (!texExit.loadFromFile("assets/exit.png"))       cerr << "Warn: missing assets/exit.png\n";
     if (!texPlayer.loadFromFile("assets/player2.jpg"))  cerr << "Warn: missing assets/player.png\n";
     sf::Texture texSoldier, texArcher, texMage;
-    // if (!texSoldier.loadFromFile("assets/soldier.jpg")) cerr << "Warn: missing assets/soldier.jpg\n";
+    if (!texSoldier.loadFromFile("assets/soldier.jpg")) cerr << "Warn: missing assets/soldier.jpg\n";
     if (!texArcher.loadFromFile("assets/Archer.png"))   cerr << "Warn: missing assets/archer.jpg\n";
     if (!texMage.loadFromFile("assets/Mage.jpeg"))       cerr << "Warn: missing assets/mage.jpg\n";
     sf::Texture texMenuBg;
@@ -179,11 +184,10 @@ int main() {
     Board board(ROWS, COLS, TILE_SIZE);
     sf::Sprite menuBgSprite;
     menuBgSprite.setTexture(texMenuBg);
-    // Scale it to fit window exactly
     float bgScaleX = (float)WINDOW_W / texMenuBg.getSize().x;
     float bgScaleY = (float)WINDOW_H / texMenuBg.getSize().y;
     menuBgSprite.setScale(bgScaleX, bgScaleY);
-    // Initial Level Load
+
     loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
               texEmpty, texBlocked, texMonster, texBoss, texExit);
 
@@ -194,15 +198,18 @@ int main() {
     playerSprite.setScale(1.25f, 1.25f);
     int movePoints = 0;
     GameState state = GameState::MainMenu;
-    string battleMessage;
     
-    // FLAGS
-    bool levelBossDefeated = false;     // Does exit open?
-    bool isFightingLevelBoss = false;   // Is current fight against level boss?
-
-    // TIMING FLAGS FOR ENEMY TURN
-    sf::Clock turnClock;
-    bool enemyTurnPending = false;
+    // --- BATTLE VARIABLES ---
+    string battleMessage;
+    std::stringstream battleLogStream; 
+    sf::Clock battleDelayClock;
+    
+    // Flags for flow control
+    bool enemyTurnPending = false; // Waiting for enemy to attack?
+    bool battleOver = false;       // Has the fight ended (waiting for victory screen delay)?
+    
+    bool levelBossDefeated = false;     
+    bool isFightingLevelBoss = false;   
 
     Enemy* currentEnemy = nullptr; 
     CombatSystem* combatSystem = nullptr;
@@ -224,7 +231,7 @@ int main() {
     playerBox.setPosition(100,350);
     
     menuButtons.push_back(createButton(WINDOW_W/2 - 100, 250, 200, 50, "Soldier", font, fontOk, [&](){
-        if(player) delete player; // Safety cleanup
+        if(player) delete player; 
         player = new Soldier(playerStartR, playerStartC);
         state = GameState::Exploring;
         playerSprite.setPosition(player->posC * TILE_SIZE, player->posR * TILE_SIZE);
@@ -251,59 +258,77 @@ int main() {
     const float btnW = 160, btnH = 40;
     float battleBtnY = WINDOW_H - 70.f;
 
-    // NOTE: Buttons now check '!enemyTurnPending' to prevent spam clicking while waiting
+    // BUTTON: ATTACK
     battleButtons.push_back(createButton(20, battleBtnY, btnW, btnH, "Attack", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        if (state != GameState::InBattle || !combatSystem) return;
+        if (enemyTurnPending || battleOver) return; // Wait for animations/end
         
-        battleMessage = player->name + " attacks!\n";
+        battleLogStream.str(""); 
+        battleLogStream.clear();
+
+        // 1. Player Attack
         combatSystem->attack();
         
-        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
+        // 2. Check Result
+        checkBattleStatus(player, currentEnemy, combatSystem, levelBossDefeated, isFightingLevelBoss, battleLogStream, battleOver, battleDelayClock);
         
-        // If battle continues, start waiting for enemy
-        if (state == GameState::InBattle) { 
-            enemyTurnPending = true;
-            turnClock.restart();
-            battleMessage += "Enemy is preparing to attack...";
-        } else if (state == GameState::Exploring) {
-            battleMessage += "You won the battle!";
+        // 3. If battle continues, queue Enemy Turn
+        if (!battleOver) {
+             enemyTurnPending = true;
+             battleDelayClock.restart();
+             battleLogStream << "\n[Enemy is preparing...]";
         }
+
+        battleMessage = battleLogStream.str();
     }));
 
+    // BUTTON: DEFEND
     battleButtons.push_back(createButton(210, battleBtnY, btnW, btnH, "Defend", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        if (state != GameState::InBattle || !combatSystem) return;
+        if (enemyTurnPending || battleOver) return;
+
+        battleLogStream.str(""); 
+        battleLogStream.clear();
+
+        combatSystem->defend(); 
         
-        battleMessage = player->name + " defends!\n";
-        combatSystem->defend();
+        // Always triggers enemy turn
+        enemyTurnPending = true;
+        battleDelayClock.restart();
+        battleLogStream << "\n[Enemy is preparing...]";
         
-        // Defend doesn't end battle usually, so go straight to waiting
-        if (state == GameState::InBattle) {
-            enemyTurnPending = true;
-            turnClock.restart();
-            battleMessage += "Enemy is preparing to attack...";
-        }
+        battleMessage = battleLogStream.str();
     }));
 
+    // BUTTON: ABILITY
     battleButtons.push_back(createButton(400, battleBtnY, btnW, btnH, "Ability", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        if (state != GameState::InBattle || !combatSystem) return;
+        if (enemyTurnPending || battleOver) return;
         
-        battleMessage = player->name + " uses ability!\n";
-        combatSystem->ability();
+        battleLogStream.str(""); 
+        battleLogStream.clear();
+
+        combatSystem->ability(); 
         
-        checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
+        checkBattleStatus(player, currentEnemy, combatSystem, levelBossDefeated, isFightingLevelBoss, battleLogStream, battleOver, battleDelayClock);
         
-        if (state == GameState::InBattle) { 
-            enemyTurnPending = true;
-            turnClock.restart();
-            battleMessage += "Enemy is preparing to attack...";
-        } else if (state == GameState::Exploring) {
-            battleMessage += "You won the battle!";
+        if (!battleOver) {
+             enemyTurnPending = true;
+             battleDelayClock.restart();
+             battleLogStream << "\n[Enemy is preparing...]";
         }
+        
+        battleMessage = battleLogStream.str();
     }));
 
+    // BUTTON: RUN
     battleButtons.push_back(createButton(590, battleBtnY, btnW, btnH, "Run", font, fontOk, [&](){
-        if (state != GameState::InBattle || !combatSystem || enemyTurnPending) return;
+        if (state != GameState::InBattle || !combatSystem) return;
+        if (enemyTurnPending || battleOver) return;
         
+        battleLogStream.str(""); 
+        battleLogStream.clear();
+
         if (combatSystem->run()) {
             Tile* t = board.getTile(player->posR, player->posC);
             if (MonsterTile* mt = dynamic_cast<MonsterTile*>(t)) { mt->resetCombatTrigger(); }
@@ -314,13 +339,12 @@ int main() {
             
             state = GameState::Exploring;
             battleMessage = "You fled!";
-            enemyTurnPending = false; // Reset just in case
         } else {
-            battleMessage = "Run failed! ";
-            // Run failed, so enemy gets a turn. Wait for it.
+            // Run failed, enemy turn delayed
             enemyTurnPending = true;
-            turnClock.restart();
-            battleMessage += "Enemy is preparing to attack...";
+            battleDelayClock.restart();
+            battleLogStream << "\n[Enemy is preparing...]";
+            battleMessage = battleLogStream.str();
         }
     }));
 
@@ -336,8 +360,11 @@ int main() {
     if(fontOk) {
         playerBattleName.setFont(font); playerBattleName.setCharacterSize(24); playerBattleName.setFillColor(sf::Color::White);
         enemyBattleName.setFont(font); enemyBattleName.setCharacterSize(24); enemyBattleName.setFillColor(sf::Color::White);
-        battleLogText.setFont(font); battleLogText.setCharacterSize(20); battleLogText.setFillColor(sf::Color::White);
-        battleLogText.setPosition(50, WINDOW_H - 200);
+        
+        battleLogText.setFont(font); 
+        battleLogText.setCharacterSize(20); 
+        battleLogText.setFillColor(sf::Color::White);
+        battleLogText.setPosition(50, WINDOW_H - 250);
     }
     
     const float BAR_WIDTH = 200, BAR_HEIGHT = 25;
@@ -348,6 +375,43 @@ int main() {
 
     // --- GAME LOOP ---
     while (window.isOpen()) {
+        
+        // --- DELAYED EVENTS HANDLING ---
+        
+        // 1. Handle Enemy Turn Delay
+        if (state == GameState::InBattle && enemyTurnPending && !battleOver) {
+            if (battleDelayClock.getElapsedTime().asSeconds() > 1.5f) {
+                battleLogStream << "\n"; // Spacer
+                combatSystem->enemyTurn();
+                
+                checkBattleStatus(player, currentEnemy, combatSystem, levelBossDefeated, isFightingLevelBoss, battleLogStream, battleOver, battleDelayClock);
+                
+                battleMessage = battleLogStream.str();
+                enemyTurnPending = false;
+            }
+        }
+        
+
+        if (state == GameState::InBattle && battleOver) {
+            if (battleDelayClock.getElapsedTime().asSeconds() > 2.0f) {
+ 
+                
+                if (combatSystem->isPlayerDefeated()) {
+                    state = GameState::GameOver;
+                } else {
+
+                    board.replaceWithEmpty(enemyRow, enemyCol, texEmpty);
+                    state = GameState::Exploring;
+                }
+
+                delete currentEnemy; currentEnemy = nullptr; 
+                delete combatSystem; combatSystem = nullptr;
+
+                battleOver = false;
+                enemyTurnPending = false;
+            }
+        }
+        
         sf::Event ev;
         while (window.pollEvent(ev)) {
             if (ev.type == sf::Event::Closed) window.close();
@@ -392,15 +456,21 @@ int main() {
                             movePoints--;
                             t->onEnter(player); 
                             
-                            if (t->isMonster() && dynamic_cast<MonsterTile*>(t)->shouldTriggerCombat()) {
-                                isFightingLevelBoss = false; // Normal monster
-                                startBattle(nr, nc, false, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
-                                enemyTurnPending = false; // Reset battle state
+                            // Check Combat Triggers
+                            bool trigMonster = t->isMonster() && dynamic_cast<MonsterTile*>(t)->shouldTriggerCombat();
+                            bool trigBoss = t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat();
+                            
+                            if (trigMonster) {
+                                isFightingLevelBoss = false; 
+                                startBattle(nr, nc, false, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage, battleLogStream);
+                                enemyTurnPending = false; 
+                                battleOver = false;
                             }
-                            else if (t->isBoss() && dynamic_cast<BossTile*>(t)->shouldTriggerCombat()) {
-                                isFightingLevelBoss = true; // This is the level boss
-                                startBattle(nr, nc, true, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage);
-                                enemyTurnPending = false; // Reset battle state
+                            else if (trigBoss) {
+                                isFightingLevelBoss = true; 
+                                startBattle(nr, nc, true, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage, battleLogStream);
+                                enemyTurnPending = false;
+                                battleOver = false;
                             }
                             else if (t->isExit()) {
                                 if (!levelBossDefeated) {
@@ -410,6 +480,7 @@ int main() {
                                     cout << "Level " << currentLevelIndex + 1 << " Cleared! Proceeding...\n";
                                     currentLevelIndex++;
                                     levelBossDefeated = false; 
+
                                     loadLevel(currentLevelIndex, allLevels, board, ROWS, COLS, playerStartR, playerStartC, 
                                               texEmpty, texBlocked, texMonster, texBoss, texExit);
                                     player->posR = playerStartR; player->posC = playerStartC;
@@ -426,30 +497,13 @@ int main() {
             }
             else if (state == GameState::InBattle) {
                 if (ev.type == sf::Event::MouseButtonPressed && ev.mouseButton.button == sf::Mouse::Left) {
+                    // Prevent interaction if busy
+                    if (enemyTurnPending || battleOver) continue;
+
                     sf::Vector2f mp(ev.mouseButton.x, ev.mouseButton.y);
                     for (auto &b : battleButtons) {
                         if (b.contains(mp)) { b.onClick(); break; }
                     }
-                }
-            }
-        }
-
-        // --- BATTLE DELAY LOGIC ---
-        // We check this every frame to see if the timer has expired
-        if (state == GameState::InBattle && enemyTurnPending) {
-            if (turnClock.getElapsedTime().asSeconds() >= 2.0f) {
-                // Execute Enemy Turn
-                battleMessage += "\nEnemy attacks!\n";
-                combatSystem->enemyTurn();
-                
-                checkBattleEnd(player, currentEnemy, combatSystem, board, enemyRow, enemyCol, texEmpty, state, levelBossDefeated, isFightingLevelBoss);
-                
-                enemyTurnPending = false; // Player can act again
-                
-                if (state == GameState::InBattle) {
-                    battleMessage += "Your turn.";
-                } else if (state == GameState::GameOver) {
-                    battleMessage += "You were defeated!";
                 }
             }
         }
@@ -469,10 +523,7 @@ int main() {
             board.draw(window);
             window.draw(playerSprite);
             if (fontOk && player) {
-                string s = "Lvl " + to_string(currentLevelIndex+1) + " | Move: WASD | SPACE(roll): " + to_string(movePoints) + 
-                           " | " + player->name + " HP: " + to_string(player->hp) + "/" + to_string(player->maxHp);
-                
-                // Add Lock Status to UI
+                string s = "Lvl " + to_string(currentLevelIndex+1) + " | Move: WASD | SPACE(roll): " + to_string(movePoints) +  " | " + player->name + " HP: " + to_string(player->hp) + "/" + to_string(player->maxHp);
                 if (!levelBossDefeated) s += " | Exit: LOCKED";
                 else s += " | Exit: OPEN";
 
@@ -482,6 +533,7 @@ int main() {
         }
         else if (state == GameState::InBattle) {
             window.draw(battleBgRect);
+            // Draw UI even if battleOver is true (so we can see the result)
             if (fontOk && player && currentEnemy) {
                 window.draw(playerBox);
                 playerBattleName.setString(player->name);
@@ -504,16 +556,15 @@ int main() {
                 enemyHpBarFront.setPosition(enemyBattleName.getPosition().x, enemyBattleName.getPosition().y + 40);
                 enemyHpBarFront.setSize(sf::Vector2f(BAR_WIDTH * enemyHpPercent, BAR_HEIGHT));
                 window.draw(enemyHpBarBack); window.draw(enemyHpBarFront);
-
+                
                 battleLogText.setString(battleMessage);
                 window.draw(battleLogText);
             }
+            
             for (auto &b : battleButtons) {
-                if (enemyTurnPending) {
-                    b.rect.setOutlineColor(sf::Color::Red);
-                } else {
-                    b.rect.setOutlineColor(sf::Color::Black);
-                }
+                // Dim buttons if waiting
+                if(enemyTurnPending || battleOver) b.rect.setFillColor(sf::Color(40,40,40)); 
+                else b.rect.setFillColor(sf::Color(70,70,70)); 
                 
                 window.draw(b.rect);
                 if (fontOk) window.draw(b.label);
