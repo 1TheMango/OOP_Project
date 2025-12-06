@@ -87,7 +87,7 @@ void CombatSystem::enemyTurn() {
 		if (crit) { dmg += D6().roll(); log << "Enemy CRITICAL!\n"; }
 		
 		player->takeDamage(dmg);
-		log << enemy->name << " deals " << dmg << " damage. Player HP = " << player->hp << "\n";
+		log << enemy->name << " deals " << dmg << " damage. \n";
 	} else {
 		log << enemy->name << " missed (Target: " << defenseTarget << ").\n";
 	}

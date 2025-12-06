@@ -276,7 +276,7 @@ int main() {
         if (!battleOver) {
              enemyTurnPending = true;
              battleDelayClock.restart();
-             battleLogStream << "\n[Enemy is preparing...]";
+
         }
 
         battleMessage = battleLogStream.str();
@@ -295,7 +295,7 @@ int main() {
         // Always triggers enemy turn
         enemyTurnPending = true;
         battleDelayClock.restart();
-        battleLogStream << "\n[Enemy is preparing...]";
+
         
         battleMessage = battleLogStream.str();
     }));
@@ -304,7 +304,7 @@ int main() {
     battleButtons.push_back(createButton(400, battleBtnY, btnW, btnH, "Ability", font, fontOk, [&](){
         if (state != GameState::InBattle || !combatSystem) return;
         if (enemyTurnPending || battleOver) return;
-        
+
         battleLogStream.str(""); 
         battleLogStream.clear();
 
@@ -315,7 +315,6 @@ int main() {
         if (!battleOver) {
              enemyTurnPending = true;
              battleDelayClock.restart();
-             battleLogStream << "\n[Enemy is preparing...]";
         }
         
         battleMessage = battleLogStream.str();
@@ -342,8 +341,7 @@ int main() {
         } else {
             // Run failed, enemy turn delayed
             enemyTurnPending = true;
-            battleDelayClock.restart();
-            battleLogStream << "\n[Enemy is preparing...]";
+            battleDelayClock.restart();;
             battleMessage = battleLogStream.str();
         }
     }));
@@ -465,6 +463,7 @@ int main() {
                                 startBattle(nr, nc, false, currentLevelIndex, player, currentEnemy, combatSystem, enemyRow, enemyCol, state, battleMessage, battleLogStream);
                                 enemyTurnPending = false; 
                                 battleOver = false;
+                                
                             }
                             else if (trigBoss) {
                                 isFightingLevelBoss = true; 
